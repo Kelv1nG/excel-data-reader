@@ -80,6 +80,8 @@ class _DiscoveryTrace:
 
     @classmethod
     def create(cls) -> _DiscoveryTrace:
+        """Return an empty mutable trace collector for one discovery run."""
+
         return cls([], [], set())
 
 
@@ -103,6 +105,8 @@ class ExcelReader:
         workbook_format: WorkbookFormat,
         diagnostics: tuple[Diagnostic, ...],
     ) -> None:
+        """Initialize a reader around already-open adapter workbooks."""
+
         self.path = path
         self._workbook = workbook
         self._cached_workbook = cached_workbook
@@ -185,13 +189,19 @@ class ExcelReader:
         )
 
     def __enter__(self) -> ExcelReader:
+        """Return this open reader for context-managed use."""
+
         self._require_open()
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close all workbook handles when leaving a context manager."""
+
         self.close()
 
     def close(self) -> None:
+        """Close formula and cached-value workbook handles idempotently."""
+
         if self._closed:
             return
         self._workbook.close()
@@ -201,6 +211,8 @@ class ExcelReader:
 
     @property
     def sheet_names(self) -> tuple[str, ...]:
+        """Return worksheet names in workbook order."""
+
         self._require_open()
         return tuple(self._workbook.sheetnames)
 

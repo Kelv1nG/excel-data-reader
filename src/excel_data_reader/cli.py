@@ -182,6 +182,8 @@ def _find(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the command-line interface and return a process-compatible exit code."""
+
     parser = _parser()
     args = parser.parse_args(argv)
     try:

@@ -68,6 +68,8 @@ class BodyPolicy:
     bottom_row: int | None = None
 
     def __post_init__(self) -> None:
+        """Normalize the mode and reject inconsistent boundary settings."""
+
         object.__setattr__(self, "mode", BodyPolicyMode(self.mode))
         if self.mode is BodyPolicyMode.BLANK_ROWS and self.blank_rows < 1:
             raise ValueError("blank_rows must be at least one")
@@ -79,14 +81,20 @@ class BodyPolicy:
 
     @classmethod
     def until_blank_rows(cls, count: int = 2) -> BodyPolicy:
+        """Stop a discovered body after the requested consecutive blank rows."""
+
         return cls(BodyPolicyMode.BLANK_ROWS, blank_rows=count)
 
     @classmethod
     def last_populated(cls) -> BodyPolicy:
+        """Continue a discovered body through its last populated selected cell."""
+
         return cls(BodyPolicyMode.LAST_POPULATED)
 
     @classmethod
     def through_row(cls, bottom_row: int) -> BodyPolicy:
+        """Use an explicit one-based bottom row for a discovered body."""
+
         return cls(BodyPolicyMode.EXPLICIT, bottom_row=bottom_row)
 
 
@@ -104,6 +112,8 @@ class TableQuery:
     within: Rectangle | str | None = None
 
     def __post_init__(self) -> None:
+        """Freeze header and alias sequences into deterministic immutable values."""
+
         required = self._headers_tuple(self.required_headers)
         optional = self._headers_tuple(self.optional_headers)
         aliases = {
@@ -134,11 +144,15 @@ class Coordinate:
     column: int
 
     def __post_init__(self) -> None:
+        """Reject coordinates outside Excel's one-based address space."""
+
         if self.row < 1 or self.column < 1:
             raise ValueError("worksheet coordinates are one-based")
 
     @property
     def a1(self) -> str:
+        """Return the coordinate in A1 notation."""
+
         return f"{_column_letters(self.column)}{self.row}"
 
 
@@ -150,34 +164,48 @@ class Rectangle:
     right: int
 
     def __post_init__(self) -> None:
+        """Reject inverted or non-positive rectangle bounds."""
+
         if min(self.top, self.left) < 1 or self.bottom < self.top or self.right < self.left:
             raise ValueError("invalid worksheet rectangle")
 
     @property
     def height(self) -> int:
+        """Return the inclusive row count."""
+
         return self.bottom - self.top + 1
 
     @property
     def width(self) -> int:
+        """Return the inclusive column count."""
+
         return self.right - self.left + 1
 
     @property
     def area(self) -> int:
+        """Return the number of cells in the rectangle."""
+
         return self.height * self.width
 
     @property
     def a1(self) -> str:
+        """Return the rectangle in compact A1 notation."""
+
         start = Coordinate(self.top, self.left).a1
         end = Coordinate(self.bottom, self.right).a1
         return start if start == end else f"{start}:{end}"
 
     def contains(self, coordinate: Coordinate) -> bool:
+        """Return whether a coordinate lies inside the inclusive bounds."""
+
         return (
             self.top <= coordinate.row <= self.bottom
             and self.left <= coordinate.column <= self.right
         )
 
     def contains_rectangle(self, rectangle: Rectangle) -> bool:
+        """Return whether another rectangle lies fully inside these bounds."""
+
         return (
             self.top <= rectangle.top
             and self.left <= rectangle.left
@@ -195,6 +223,8 @@ class HeaderEvidence:
 
     @property
     def matched(self) -> bool:
+        """Return whether at least one physical header supplied evidence."""
+
         return bool(self.raw_headers)
 
 
@@ -228,6 +258,8 @@ class RangeReference:
 
     @property
     def a1(self) -> str:
+        """Return the sheet-qualified range in A1 notation."""
+
         return f"'{self.sheet}'!{self.bounds.a1}"
 
 
@@ -252,6 +284,8 @@ class CellData:
 
     @property
     def address(self) -> str:
+        """Return the source cell coordinate in A1 notation."""
+
         return self.coordinate.a1
 
 
@@ -279,10 +313,14 @@ class TableMatch:
 
     @property
     def range(self) -> str:
+        """Return the matched rectangle in A1 notation."""
+
         return self.bounds.a1
 
     @property
     def is_empty(self) -> bool:
+        """Return whether the match contains no data rows."""
+
         return self.data_end_row < self.data_start_row
 
 
@@ -292,6 +330,8 @@ class MatchSet:
     diagnostics: tuple[Diagnostic, ...] = ()
 
     def require_one(self) -> TableMatch:
+        """Return the sole match or raise structured not-found or ambiguity diagnostics."""
+
         if len(self.matches) == 1:
             return self.matches[0]
         if not self.matches:
@@ -317,10 +357,14 @@ class DiscoveryReport:
 
     @property
     def selected_matches(self) -> tuple[TableMatch, ...]:
+        """Return the final matches selected by discovery."""
+
         return self.result.matches
 
     @property
     def diagnostics(self) -> tuple[Diagnostic, ...]:
+        """Return diagnostics attached to the discovery result."""
+
         return self.result.diagnostics
 
 
@@ -331,6 +375,8 @@ class DataRow:
 
     @property
     def values(self) -> tuple[Any, ...]:
+        """Return cell values in logical column order."""
+
         return tuple(cell.value for cell in self.cells)
 
 
@@ -341,13 +387,19 @@ class TableData:
 
     @property
     def columns(self) -> tuple[ColumnInfo, ...]:
+        """Return the logical columns selected by the match."""
+
         return self.match.columns
 
     @property
     def values(self) -> tuple[tuple[Any, ...], ...]:
+        """Return table values as immutable rows in logical column order."""
+
         return tuple(row.values for row in self.rows)
 
     def records(self) -> tuple[Mapping[str, Any], ...]:
+        """Return immutable name-to-value rows when logical column names are unique."""
+
         names = tuple(column.name for column in self.columns)
         normalized = tuple(normalize_header(name) for name in names)
         duplicates = sorted({name for name in normalized if normalized.count(name) > 1})
@@ -376,6 +428,8 @@ class SheetData:
     bounds: Rectangle | None
 
     def to_matrix(self, *, fill: Any = None) -> tuple[tuple[Any, ...], ...]:
+        """Materialize the sparse sheet bounds as a dense immutable matrix."""
+
         if self.bounds is None:
             return ()
         values = {(cell.coordinate.row, cell.coordinate.column): cell.value for cell in self.cells}

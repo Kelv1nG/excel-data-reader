@@ -26,6 +26,8 @@ class AnalysisControl:
     clock: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        """Validate timeout configuration before the control is reused."""
+
         if self.timeout_seconds is not None and self.timeout_seconds < 0:
             raise ValueError("timeout_seconds cannot be negative")
 
@@ -48,6 +50,8 @@ class _AnalysisBudget:
     started_at: float
 
     def checkpoint(self) -> None:
+        """Raise a stable control-flow error when cancellation or timeout applies."""
+
         if self.is_cancelled is not None and self.is_cancelled():
             raise AnalysisCancelledError(
                 Diagnostic(DiagnosticCode.ANALYSIS_CANCELLED, "analysis was cancelled")

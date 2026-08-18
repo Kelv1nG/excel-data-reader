@@ -70,6 +70,8 @@ class AnalysisRequest:
     request_id: str | None = None
 
     def __post_init__(self) -> None:
+        """Normalize enum values and validate operation-specific request fields."""
+
         object.__setattr__(self, "operation", AnalysisOperation(self.operation))
         object.__setattr__(self, "value_mode", ValueMode(self.value_mode))
         if self.operation is AnalysisOperation.FIND_TABLES and self.query is None:
@@ -85,6 +87,8 @@ class AnalysisRequest:
         *,
         request_id: str | None = None,
     ) -> AnalysisRequest:
+        """Build a workbook-inventory analysis request."""
+
         return cls(AnalysisOperation.INVENTORY, request_id=request_id)
 
     @classmethod
@@ -98,6 +102,8 @@ class AnalysisRequest:
         value_mode: ValueMode | str = ValueMode.FORMULA,
         request_id: str | None = None,
     ) -> AnalysisRequest:
+        """Build a table-discovery request with optional bounded row extraction."""
+
         return cls(
             AnalysisOperation.FIND_TABLES,
             query=query,
@@ -132,6 +138,8 @@ class AnalysisResponse:
     inspection: WorkbookInspection | None = None
 
     def to_json(self, *, indent: int | None = None) -> str:
+        """Serialize the complete response using the stable typed-value schema."""
+
         return to_json(self, indent=indent)
 
 

@@ -49,6 +49,8 @@ class Diagnostic:
     address: str | None = None
 
     def __str__(self) -> str:
+        """Render the diagnostic code, optional location, and message."""
+
         location = ""
         if self.sheet is not None:
             location = self.sheet
@@ -62,6 +64,8 @@ class ExcelDataReaderError(ValueError):
     """Raised when a caller asks for a result that cannot be returned safely."""
 
     def __init__(self, diagnostics: Diagnostic | Iterable[Diagnostic]):
+        """Store one or more diagnostics and build the exception message."""
+
         normalized = (diagnostics,) if isinstance(diagnostics, Diagnostic) else tuple(diagnostics)
         if not normalized:
             raise ValueError("at least one diagnostic is required")
