@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from itertools import product
 from pathlib import Path
@@ -97,6 +97,7 @@ class ExcelReader:
         value_mode: ValueMode,
         max_scan_cells: int,
         max_candidates: int,
+        checkpoint: Callable[[], None] | None,
     ) -> None:
         self.path = path
         self._workbook = workbook
@@ -104,6 +105,7 @@ class ExcelReader:
         self.value_mode = value_mode
         self.max_scan_cells = max_scan_cells
         self.max_candidates = max_candidates
+        self._checkpoint_callback = checkpoint
         self._closed = False
 
     @classmethod
@@ -114,6 +116,7 @@ class ExcelReader:
         value_mode: ValueMode | str = ValueMode.FORMULA,
         max_scan_cells: int = 2_000_000,
         max_candidates: int = 100,
+        checkpoint: Callable[[], None] | None = None,
     ) -> ExcelReader:
         """Open a workbook for deterministic discovery and extraction."""
 
@@ -123,6 +126,8 @@ class ExcelReader:
         if max_candidates < 1:
             raise ValueError("max_candidates must be positive")
 
+        if checkpoint is not None:
+            checkpoint()
         workbook_path = Path(path)
         workbook = load_workbook(
             workbook_path,
@@ -131,17 +136,23 @@ class ExcelReader:
             keep_links=False,
         )
         cached_workbook = None
-        if mode in {ValueMode.CACHED, ValueMode.BOTH}:
-            try:
+        try:
+            if checkpoint is not None:
+                checkpoint()
+            if mode in {ValueMode.CACHED, ValueMode.BOTH}:
                 cached_workbook = load_workbook(
                     workbook_path,
                     read_only=False,
                     data_only=True,
                     keep_links=False,
                 )
-            except Exception:
-                workbook.close()
-                raise
+                if checkpoint is not None:
+                    checkpoint()
+        except BaseException:
+            workbook.close()
+            if cached_workbook is not None:
+                cached_workbook.close()
+            raise
         return cls(
             workbook_path,
             workbook,
@@ -149,6 +160,7 @@ class ExcelReader:
             value_mode=mode,
             max_scan_cells=max_scan_cells,
             max_candidates=max_candidates,
+            checkpoint=checkpoint,
         )
 
     def __enter__(self) -> ExcelReader:
@@ -178,6 +190,7 @@ class ExcelReader:
         sheets: list[SheetInfo] = []
         native_tables: list[NativeTableInfo] = []
         for sheet in self._workbook.worksheets:
+            self._checkpoint()
             tables = tuple(self._table_info(sheet, table) for table in sheet.tables.values())
             native_tables.extend(tables)
             sheets.append(
@@ -271,6 +284,7 @@ class ExcelReader:
         matches: list[TableMatch] = []
         diagnostics: list[Diagnostic] = []
         for item in matching_infos:
+            self._checkpoint()
             if not item.is_resolvable:
                 diagnostics.append(
                     Diagnostic(
@@ -428,7 +442,9 @@ class ExcelReader:
         structural_signatures: set[tuple[str, int, tuple[int, ...]]] = set()
 
         for worksheet in worksheets:
+            self._checkpoint()
             for table in worksheet.tables.values():
+                self._checkpoint()
                 native = self._table_match(worksheet, table)
                 evidence = self._column_evidence(fields, native.columns)
                 reasons: list[CandidateReason] = []
@@ -475,6 +491,7 @@ class ExcelReader:
                     structural_signatures.add(self._header_signature(match))
 
         for worksheet in worksheets:
+            self._checkpoint()
             scan_bounds = self._query_scan_bounds(worksheet, within)
             if scan_bounds is None:
                 if trace is not None:
@@ -503,6 +520,7 @@ class ExcelReader:
                 min_col=scan_bounds.left,
                 max_col=scan_bounds.right,
             ):
+                self._checkpoint()
                 header_row = row[0].row
                 last_scanned_row = header_row
                 positions: list[list[tuple[int, Any]]] = [[] for _ in fields]
@@ -718,6 +736,7 @@ class ExcelReader:
         rows: list[DataRow] = []
         if not match.is_empty:
             for row_index in range(match.data_start_row, match.data_end_row + 1):
+                self._checkpoint()
                 cells = tuple(
                     self._cell_data(
                         worksheet,
@@ -750,6 +769,7 @@ class ExcelReader:
             min_col=1,
             max_col=worksheet.max_column,
         ):
+            self._checkpoint()
             for cell in row:
                 if cell.value is None and not (include_styled_blanks and cell.has_style):
                     continue
@@ -775,6 +795,10 @@ class ExcelReader:
             raise ExcelDataReaderError(
                 Diagnostic(DiagnosticCode.READER_CLOSED, "the workbook reader is closed")
             )
+
+    def _checkpoint(self) -> None:
+        if self._checkpoint_callback is not None:
+            self._checkpoint_callback()
 
     def _sheet(self, name: str) -> Worksheet:
         self._require_open()
@@ -1099,6 +1123,7 @@ class ExcelReader:
         last_nonblank = header_row
         blank_run = 0
         for row in range(header_row + 1, max_row + 1):
+            self._checkpoint()
             if any(worksheet.cell(row, column).value is not None for column in columns):
                 last_nonblank = row
                 blank_run = 0
@@ -1179,9 +1204,12 @@ class ExcelReader:
 
     def _iter_named_range_info(self) -> Iterator[NamedRangeInfo]:
         for name, definition in self._workbook.defined_names.items():
+            self._checkpoint()
             yield self._named_range_info(name, definition, scope=None)
         for worksheet in self._workbook.worksheets:
+            self._checkpoint()
             for name, definition in worksheet.defined_names.items():
+                self._checkpoint()
                 yield self._named_range_info(name, definition, scope=worksheet.title)
 
     def _named_range_info(

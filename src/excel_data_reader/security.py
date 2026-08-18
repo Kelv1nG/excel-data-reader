@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from zipfile import (
@@ -82,11 +83,17 @@ class WorkbookInspection:
     has_external_links: bool
 
 
-def inspect_workbook(path: str | Path, policy: WorkbookPolicy | None = None) -> WorkbookInspection:
+def inspect_workbook(
+    path: str | Path,
+    policy: WorkbookPolicy | None = None,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> WorkbookInspection:
     """Validate an OOXML archive without extracting it to the filesystem."""
 
     workbook_path = Path(path)
     active_policy = policy or WorkbookPolicy()
+    _checkpoint(checkpoint)
     extension = workbook_path.suffix.casefold()
     if extension not in active_policy.allowed_extensions:
         _reject(
@@ -107,6 +114,8 @@ def inspect_workbook(path: str | Path, policy: WorkbookPolicy | None = None) -> 
             f"file is {stat.st_size:,} bytes; limit is {active_policy.max_file_size:,}",
         )
 
+    _checkpoint(checkpoint)
+
     with workbook_path.open("rb") as stream:
         signature = stream.read(len(_OLE_COMPOUND_MAGIC))
     if signature == _OLE_COMPOUND_MAGIC:
@@ -125,7 +134,7 @@ def inspect_workbook(path: str | Path, policy: WorkbookPolicy | None = None) -> 
     try:
         with ZipFile(workbook_path, mode="r", allowZip64=True) as archive:
             members = archive.infolist()
-            _validate_members(members, active_policy)
+            _validate_members(members, active_policy, checkpoint=checkpoint)
             names = {item.filename for item in members}
             missing = sorted(_REQUIRED_OOXML_MEMBERS - names)
             if missing:
@@ -163,7 +172,7 @@ def inspect_workbook(path: str | Path, policy: WorkbookPolicy | None = None) -> 
     return WorkbookInspection(
         extension=extension,
         file_size=stat.st_size,
-        sha256=_sha256(workbook_path),
+        sha256=_sha256(workbook_path, checkpoint=checkpoint),
         archive_entries=len(members),
         compressed_size=compressed_size,
         uncompressed_size=uncompressed_size,
@@ -174,7 +183,12 @@ def inspect_workbook(path: str | Path, policy: WorkbookPolicy | None = None) -> 
     )
 
 
-def _validate_members(members: list[ZipInfo], policy: WorkbookPolicy) -> None:
+def _validate_members(
+    members: list[ZipInfo],
+    policy: WorkbookPolicy,
+    *,
+    checkpoint: Callable[[], None] | None,
+) -> None:
     if len(members) > policy.max_archive_entries:
         _reject(
             DiagnosticCode.ARCHIVE_LIMIT_EXCEEDED,
@@ -183,6 +197,7 @@ def _validate_members(members: list[ZipInfo], policy: WorkbookPolicy) -> None:
     names: set[str] = set()
     total_uncompressed = 0
     for member in members:
+        _checkpoint(checkpoint)
         name = member.filename
         if name in names:
             _reject(
@@ -242,12 +257,18 @@ def _compression_ratio(member: ZipInfo) -> float:
     return member.file_size / member.compress_size
 
 
-def _sha256(path: Path) -> str:
+def _sha256(path: Path, *, checkpoint: Callable[[], None] | None) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            _checkpoint(checkpoint)
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _checkpoint(callback: Callable[[], None] | None) -> None:
+    if callback is not None:
+        callback()
 
 
 def _reject(code: DiagnosticCode, message: str) -> None:

@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import BinaryIO
+from unicodedata import category
 from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile
 
 from defusedxml.common import DefusedXmlException
 from openpyxl.utils.exceptions import InvalidFileException
 
+from excel_data_reader.control import (
+    AnalysisCancelledError,
+    AnalysisControl,
+    AnalysisTimeoutError,
+    _AnalysisBudget,
+)
 from excel_data_reader.diagnostics import Diagnostic, ExcelDataReaderError
 from excel_data_reader.diagnostics import DiagnosticCode as Code
 from excel_data_reader.model import (
@@ -131,25 +141,123 @@ def analyze_workbook(
     max_scan_cells: int = 2_000_000,
     max_candidates: int = 100,
     policy: WorkbookPolicy | None = None,
+    control: AnalysisControl | None = None,
 ) -> AnalysisResponse:
     """Analyze a workbook through a stable, JSON-serializable service boundary."""
 
     workbook_path = Path(path)
+    return _analyze_path(
+        workbook_path,
+        request,
+        source_name=workbook_path.name,
+        max_scan_cells=max_scan_cells,
+        max_candidates=max_candidates,
+        policy=policy or WorkbookPolicy(),
+        budget=(control or AnalysisControl()).start(),
+    )
+
+
+def analyze_workbook_bytes(
+    data: bytes | bytearray | memoryview | BinaryIO,
+    filename: str,
+    request: AnalysisRequest,
+    *,
+    max_scan_cells: int = 2_000_000,
+    max_candidates: int = 100,
+    policy: WorkbookPolicy | None = None,
+    control: AnalysisControl | None = None,
+    temp_dir: str | Path | None = None,
+) -> AnalysisResponse:
+    """Stage an uploaded workbook safely, analyze it, and remove the staged file."""
+
+    source_name = _source_name(filename)
+    active_policy = policy or WorkbookPolicy()
+    budget = (control or AnalysisControl()).start()
+    try:
+        budget.checkpoint()
+        with TemporaryDirectory(prefix="excel-data-reader-", dir=temp_dir) as directory:
+            staged_path = Path(directory) / f"upload{Path(source_name).suffix.casefold()}"
+            _write_upload(
+                data,
+                staged_path,
+                max_file_size=active_policy.max_file_size,
+                checkpoint=budget.checkpoint,
+            )
+            return _analyze_path(
+                staged_path,
+                request,
+                source_name=source_name,
+                max_scan_cells=max_scan_cells,
+                max_candidates=max_candidates,
+                policy=active_policy,
+                budget=budget,
+            )
+    except AnalysisCancelledError as error:
+        return _response(
+            source_name,
+            request,
+            AnalysisStatus.CANCELLED,
+            diagnostics=error.diagnostics,
+        )
+    except AnalysisTimeoutError as error:
+        return _response(
+            source_name,
+            request,
+            AnalysisStatus.TIMEOUT,
+            diagnostics=error.diagnostics,
+        )
+    except WorkbookRejectedError as error:
+        return _response(
+            source_name,
+            request,
+            AnalysisStatus.REJECTED,
+            diagnostics=error.diagnostics,
+        )
+    except OSError:
+        return _response(
+            source_name,
+            request,
+            AnalysisStatus.ERROR,
+            diagnostics=(
+                Diagnostic(
+                    Code.UPLOAD_STAGING_FAILED,
+                    "uploaded workbook could not be staged for analysis",
+                ),
+            ),
+        )
+
+
+def _analyze_path(
+    workbook_path: Path,
+    request: AnalysisRequest,
+    *,
+    source_name: str,
+    max_scan_cells: int,
+    max_candidates: int,
+    policy: WorkbookPolicy,
+    budget: _AnalysisBudget,
+) -> AnalysisResponse:
     inspection: WorkbookInspection | None = None
     try:
-        inspection = inspect_workbook(workbook_path, policy)
+        budget.checkpoint()
+        inspection = inspect_workbook(
+            workbook_path,
+            policy,
+            checkpoint=budget.checkpoint,
+        )
         with ExcelReader.open(
             workbook_path,
             value_mode=request.value_mode,
             max_scan_cells=max_scan_cells,
             max_candidates=max_candidates,
+            checkpoint=budget.checkpoint,
         ) as reader:
             inventory = reader.inventory() if request.include_inventory else None
             if request.operation is AnalysisOperation.INVENTORY:
                 if inventory is None:
                     inventory = reader.inventory()
                 return _response(
-                    workbook_path,
+                    source_name,
                     request,
                     AnalysisStatus.SUCCESS,
                     inventory=inventory,
@@ -180,7 +288,7 @@ def analyze_workbook(
                     ),
                 )
             return _response(
-                workbook_path,
+                source_name,
                 request,
                 status,
                 inventory=inventory,
@@ -189,9 +297,25 @@ def analyze_workbook(
                 diagnostics=discovery.diagnostics,
                 inspection=inspection,
             )
+    except AnalysisCancelledError as error:
+        return _response(
+            source_name,
+            request,
+            AnalysisStatus.CANCELLED,
+            diagnostics=error.diagnostics,
+            inspection=inspection,
+        )
+    except AnalysisTimeoutError as error:
+        return _response(
+            source_name,
+            request,
+            AnalysisStatus.TIMEOUT,
+            diagnostics=error.diagnostics,
+            inspection=inspection,
+        )
     except WorkbookRejectedError as error:
         return _response(
-            workbook_path,
+            source_name,
             request,
             AnalysisStatus.REJECTED,
             diagnostics=error.diagnostics,
@@ -199,7 +323,7 @@ def analyze_workbook(
         )
     except (BadZipFile, DefusedXmlException, InvalidFileException, OSError, ParseError) as error:
         return _response(
-            workbook_path,
+            source_name,
             request,
             AnalysisStatus.REJECTED,
             diagnostics=(
@@ -212,7 +336,7 @@ def analyze_workbook(
         )
     except ExcelDataReaderError as error:
         return _response(
-            workbook_path,
+            source_name,
             request,
             AnalysisStatus.ERROR,
             diagnostics=error.diagnostics,
@@ -221,7 +345,7 @@ def analyze_workbook(
 
 
 def _response(
-    path: Path,
+    source_name: str,
     request: AnalysisRequest,
     status: AnalysisStatus,
     *,
@@ -235,7 +359,7 @@ def _response(
         schema_version=ANALYSIS_SCHEMA_VERSION,
         value_schema_version=JSON_VALUE_SCHEMA_VERSION,
         request_id=request.request_id,
-        source_name=path.name,
+        source_name=source_name,
         operation=request.operation,
         status=status,
         inventory=inventory,
@@ -244,3 +368,51 @@ def _response(
         diagnostics=diagnostics,
         inspection=inspection,
     )
+
+
+def _write_upload(
+    data: bytes | bytearray | memoryview | BinaryIO,
+    path: Path,
+    *,
+    max_file_size: int,
+    checkpoint: Callable[[], None],
+) -> None:
+    total = 0
+    with path.open("wb") as destination:
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            total = len(data)
+            if total > max_file_size:
+                _reject_large_upload(total, max_file_size)
+            destination.write(bytes(data))
+            checkpoint()
+            return
+
+        while True:
+            checkpoint()
+            chunk = data.read(1024 * 1024)
+            if not chunk:
+                break
+            if not isinstance(chunk, bytes):
+                raise TypeError("uploaded binary stream must return bytes")
+            total += len(chunk)
+            if total > max_file_size:
+                _reject_large_upload(total, max_file_size)
+            destination.write(chunk)
+
+
+def _reject_large_upload(actual_size: int, maximum_size: int) -> None:
+    raise WorkbookRejectedError(
+        Diagnostic(
+            Code.WORKBOOK_TOO_LARGE,
+            f"upload exceeds the {maximum_size:,} byte limit ({actual_size:,} bytes read)",
+        )
+    )
+
+
+def _source_name(filename: str) -> str:
+    normalized = filename.replace("\\", "/")
+    basename = normalized.rsplit("/", maxsplit=1)[-1].strip()
+    printable = "".join(
+        "_" if category(character).startswith("C") else character for character in basename
+    )
+    return printable[-255:] or "workbook"

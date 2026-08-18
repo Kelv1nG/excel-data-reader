@@ -1,5 +1,10 @@
 """Public API for excel-data-reader."""
 
+from excel_data_reader.control import (
+    AnalysisCancelledError,
+    AnalysisControl,
+    AnalysisTimeoutError,
+)
 from excel_data_reader.diagnostics import (
     Diagnostic,
     DiagnosticCode,
@@ -51,15 +56,19 @@ from excel_data_reader.service import (
     AnalysisStatus,
     ExtractedTable,
     analyze_workbook,
+    analyze_workbook_bytes,
 )
 
 __all__ = [
     "ANALYSIS_SCHEMA_VERSION",
     "JSON_VALUE_SCHEMA_VERSION",
+    "AnalysisCancelledError",
+    "AnalysisControl",
     "AnalysisOperation",
     "AnalysisRequest",
     "AnalysisResponse",
     "AnalysisStatus",
+    "AnalysisTimeoutError",
     "BodyPolicy",
     "BodyPolicyMode",
     "CandidateReason",
@@ -96,6 +105,7 @@ __all__ = [
     "WorkbookPolicy",
     "WorkbookRejectedError",
     "analyze_workbook",
+    "analyze_workbook_bytes",
     "inspect_workbook",
     "normalize_header",
     "to_json",
