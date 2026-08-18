@@ -36,8 +36,10 @@ from excel_data_reader.model import (
 )
 from excel_data_reader.normalization import normalize_header
 from excel_data_reader.reader import ExcelReader
+from excel_data_reader.serialization import JSON_VALUE_SCHEMA_VERSION, to_json, to_jsonable
 
 __all__ = [
+    "JSON_VALUE_SCHEMA_VERSION",
     "BodyPolicy",
     "BodyPolicyMode",
     "CandidateReason",
@@ -70,4 +72,6 @@ __all__ = [
     "ValueMode",
     "WorkbookInventory",
     "normalize_header",
+    "to_json",
+    "to_jsonable",
 ]

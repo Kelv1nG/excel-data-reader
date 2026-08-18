@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import fields, is_dataclass
-from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from excel_data_reader.diagnostics import ExcelDataReaderError
 from excel_data_reader.model import (
@@ -19,6 +15,7 @@ from excel_data_reader.model import (
     WorkbookInventory,
 )
 from excel_data_reader.reader import ExcelReader
+from excel_data_reader.serialization import to_json
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -108,20 +105,6 @@ def _query(args: argparse.Namespace) -> TableQuery:
     )
 
 
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, Path):
-        return str(value)
-    if is_dataclass(value) and not isinstance(value, type):
-        return {field.name: _jsonable(getattr(value, field.name)) for field in fields(value)}
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (tuple, list)):
-        return [_jsonable(item) for item in value]
-    return value
-
-
 def _print_inventory(path: Path, inventory: WorkbookInventory) -> None:
     print(f"Workbook: {path}")
     print(f"Sheets ({len(inventory.sheets)}):")
@@ -179,7 +162,7 @@ def _inspect(args: argparse.Namespace) -> int:
     with ExcelReader.open(args.workbook) as reader:
         inventory = reader.inventory()
     if args.as_json:
-        print(json.dumps(_jsonable(inventory), indent=2, ensure_ascii=False))
+        print(to_json(inventory, indent=2))
     else:
         _print_inventory(args.workbook, inventory)
     return 0
@@ -190,7 +173,7 @@ def _find(args: argparse.Namespace) -> int:
     with ExcelReader.open(args.workbook) as reader:
         report = reader.explain(query)
     if args.as_json:
-        print(json.dumps(_jsonable(report), indent=2, ensure_ascii=False))
+        print(to_json(report, indent=2))
     else:
         _print_report(args.workbook, report)
     if len(report.selected_matches) == 1:
