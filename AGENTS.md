@@ -29,7 +29,8 @@
 
 - Preserve unrelated user changes.
 - Add contract-level tests for every public behavior change.
-- Give every function and method under `src/excel_data_reader` a concise behavioral docstring.
+- Give every function and method under `src/excel_data_reader` a concise behavioral docstring,
+  with a description for each explicit parameter other than `self` and `cls`.
 - Use stable diagnostic codes with worksheet and cell locations when available.
 - Run `uv run pytest`, `uv run ruff check src tests examples`,
   `uv run ruff format --check src tests examples`,
