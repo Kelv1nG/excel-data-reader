@@ -93,7 +93,15 @@ def inspect_workbook(
     *,
     checkpoint: Callable[[], None] | None = None,
 ) -> WorkbookInspection:
-    """Validate a supported workbook container before parsing cell data."""
+    """Validate a supported workbook container before parsing cell data.
+
+    Args:
+        path: Filesystem path to the workbook container.
+        policy: Validation limits and allowed workbook features. Uses the default
+            :class:`WorkbookPolicy` when omitted.
+        checkpoint: Optional callback invoked during long-running work to support
+            cancellation and deadlines.
+    """
 
     workbook_path = Path(path)
     active_policy = policy or WorkbookPolicy()

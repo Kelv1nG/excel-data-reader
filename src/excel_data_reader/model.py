@@ -81,7 +81,11 @@ class BodyPolicy:
 
     @classmethod
     def until_blank_rows(cls, count: int = 2) -> BodyPolicy:
-        """Stop a discovered body after the requested consecutive blank rows."""
+        """Stop a discovered body after the requested consecutive blank rows.
+
+        Args:
+            count: Number of consecutive blank rows that ends the table body.
+        """
 
         return cls(BodyPolicyMode.BLANK_ROWS, blank_rows=count)
 
@@ -93,7 +97,11 @@ class BodyPolicy:
 
     @classmethod
     def through_row(cls, bottom_row: int) -> BodyPolicy:
-        """Use an explicit one-based bottom row for a discovered body."""
+        """Use an explicit one-based bottom row for a discovered body.
+
+        Args:
+            bottom_row: One-based worksheet row at which the table body ends.
+        """
 
         return cls(BodyPolicyMode.EXPLICIT, bottom_row=bottom_row)
 
@@ -200,7 +208,11 @@ class Rectangle:
         return start if start == end else f"{start}:{end}"
 
     def contains(self, coordinate: Coordinate) -> bool:
-        """Return whether a coordinate lies inside the inclusive bounds."""
+        """Return whether a coordinate lies inside the inclusive bounds.
+
+        Args:
+            coordinate: Worksheet coordinate to test.
+        """
 
         return (
             self.top <= coordinate.row <= self.bottom
@@ -208,7 +220,11 @@ class Rectangle:
         )
 
     def contains_rectangle(self, rectangle: Rectangle) -> bool:
-        """Return whether another rectangle lies fully inside these bounds."""
+        """Return whether another rectangle lies fully inside these bounds.
+
+        Args:
+            rectangle: Worksheet rectangle to test.
+        """
 
         return (
             self.top <= rectangle.top
@@ -432,7 +448,11 @@ class SheetData:
     bounds: Rectangle | None
 
     def to_matrix(self, *, fill: Any = None) -> tuple[tuple[Any, ...], ...]:
-        """Materialize the sparse sheet bounds as a dense immutable matrix."""
+        """Materialize the sparse sheet bounds as a dense immutable matrix.
+
+        Args:
+            fill: Value used for coordinates absent from the sparse cell collection.
+        """
 
         if self.bounds is None:
             return ()

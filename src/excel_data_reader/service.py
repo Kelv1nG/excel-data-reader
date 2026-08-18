@@ -87,7 +87,11 @@ class AnalysisRequest:
         *,
         request_id: str | None = None,
     ) -> AnalysisRequest:
-        """Build a workbook-inventory analysis request."""
+        """Build a workbook-inventory analysis request.
+
+        Args:
+            request_id: Optional caller-provided correlation identifier.
+        """
 
         return cls(AnalysisOperation.INVENTORY, request_id=request_id)
 
@@ -102,7 +106,16 @@ class AnalysisRequest:
         value_mode: ValueMode | str = ValueMode.FORMULA,
         request_id: str | None = None,
     ) -> AnalysisRequest:
-        """Build a table-discovery request with optional bounded row extraction."""
+        """Build a table-discovery request with optional bounded row extraction.
+
+        Args:
+            query: Structured table-discovery query to execute.
+            include_inventory: Whether to include workbook structure in the response.
+            include_rows: Whether to extract rows for selected matches.
+            max_output_rows: Maximum extracted rows returned per matched table.
+            value_mode: Whether cells expose formulas, cached values, or both.
+            request_id: Optional caller-provided correlation identifier.
+        """
 
         return cls(
             AnalysisOperation.FIND_TABLES,
@@ -138,7 +151,12 @@ class AnalysisResponse:
     inspection: WorkbookInspection | None = None
 
     def to_json(self, *, indent: int | None = None) -> str:
-        """Serialize the complete response using the stable typed-value schema."""
+        """Serialize the complete response using the stable typed-value schema.
+
+        Args:
+            indent: Number of spaces used for pretty-printing, or ``None`` for
+                compact output.
+        """
 
         return to_json(self, indent=indent)
 
@@ -152,7 +170,16 @@ def analyze_workbook(
     policy: WorkbookPolicy | None = None,
     control: AnalysisControl | None = None,
 ) -> AnalysisResponse:
-    """Analyze a workbook through a stable, JSON-serializable service boundary."""
+    """Analyze a workbook through a stable, JSON-serializable service boundary.
+
+    Args:
+        path: Filesystem path to the workbook.
+        request: Inventory or table-discovery operation to perform.
+        max_scan_cells: Maximum worksheet cells inspected per discovery scan.
+        max_candidates: Maximum discovery candidates retained in a response.
+        policy: Optional validation policy for the workbook container.
+        control: Optional cancellation and timeout controls.
+    """
 
     workbook_path = Path(path)
     return _analyze_path(
@@ -177,7 +204,18 @@ def analyze_workbook_bytes(
     control: AnalysisControl | None = None,
     temp_dir: str | Path | None = None,
 ) -> AnalysisResponse:
-    """Stage an uploaded workbook safely, analyze it, and remove the staged file."""
+    """Stage an uploaded workbook safely, analyze it, and remove the staged file.
+
+    Args:
+        data: Workbook bytes or a binary stream containing them.
+        filename: Untrusted source filename used for format selection and reporting.
+        request: Inventory or table-discovery operation to perform.
+        max_scan_cells: Maximum worksheet cells inspected per discovery scan.
+        max_candidates: Maximum discovery candidates retained in a response.
+        policy: Optional validation policy for the workbook container and upload.
+        control: Optional cancellation and timeout controls.
+        temp_dir: Optional parent directory for the temporary staged workbook.
+    """
 
     source_name = _source_name(filename)
     active_policy = policy or WorkbookPolicy()

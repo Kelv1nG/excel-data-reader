@@ -11,7 +11,11 @@ _SEPARATORS = str.maketrans({"_": " ", "-": " ", "\u00a0": " "})
 
 
 def normalize_header(value: Any) -> str:
-    """Return the exact canonical form used by MVP header matching."""
+    """Return the exact canonical form used by MVP header matching.
+
+    Args:
+        value: Header-like value to convert to normalized text.
+    """
 
     text = unicodedata.normalize("NFKC", str(value)).translate(_SEPARATORS)
     return _WHITESPACE.sub(" ", text).strip().casefold()

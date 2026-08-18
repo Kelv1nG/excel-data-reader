@@ -128,7 +128,16 @@ class ExcelReader:
         max_candidates: int = 100,
         checkpoint: Callable[[], None] | None = None,
     ) -> ExcelReader:
-        """Open a workbook for deterministic discovery and extraction."""
+        """Open a workbook for deterministic discovery and extraction.
+
+        Args:
+            path: Filesystem path to an OOXML or legacy XLS workbook.
+            value_mode: Whether cells expose formulas, cached values, or both.
+            max_scan_cells: Maximum worksheet cells inspected per discovery scan.
+            max_candidates: Maximum discovery candidates retained per query.
+            checkpoint: Optional callback invoked during long-running work to support
+                cancellation and deadlines.
+        """
 
         mode = ValueMode(value_mode)
         if max_scan_cells < 1:
@@ -250,7 +259,14 @@ class ExcelReader:
         *,
         header: int | None = 0,
     ) -> TableData:
-        """Extract one explicit rectangular A1 range."""
+        """Extract one explicit rectangular A1 range.
+
+        Args:
+            sheet: Exact worksheet name containing the range.
+            cell_range: Rectangular A1 reference, with or without a sheet prefix.
+            header: Zero-based row offset within the range to use as headers, or
+                ``None`` to generate column names.
+        """
 
         worksheet = self._sheet(sheet)
         bounds = self._parse_rectangle(cell_range, sheet=sheet)
@@ -268,7 +284,12 @@ class ExcelReader:
         *,
         sheet: str | None = None,
     ) -> MatchSet:
-        """Find native Excel Tables by optional name and worksheet."""
+        """Find native Excel Tables by optional name and worksheet.
+
+        Args:
+            name: Optional table name matched case-insensitively.
+            sheet: Optional exact worksheet name used to limit the search.
+        """
 
         self._require_open()
         if sheet is not None:
@@ -292,7 +313,12 @@ class ExcelReader:
         return MatchSet(matches, diagnostics)
 
     def get_table(self, name: str, *, sheet: str | None = None) -> TableData:
-        """Extract exactly one native Excel Table."""
+        """Extract exactly one native Excel Table.
+
+        Args:
+            name: Table name matched case-insensitively.
+            sheet: Optional exact worksheet name used to limit the search.
+        """
 
         return self.extract(self.find_native_tables(name, sheet=sheet).require_one())
 
@@ -303,7 +329,14 @@ class ExcelReader:
         sheet: str | None = None,
         header: int | None = 0,
     ) -> MatchSet:
-        """Find rectangular destinations of defined names."""
+        """Find rectangular destinations of defined names.
+
+        Args:
+            name: Optional defined name matched case-insensitively.
+            sheet: Optional exact worksheet name used to filter destinations.
+            header: Zero-based row offset within each range to use as headers, or
+                ``None`` to generate column names.
+        """
 
         self._require_open()
         if sheet is not None:
@@ -370,7 +403,14 @@ class ExcelReader:
         sheet: str | None = None,
         header: int | None = 0,
     ) -> TableData:
-        """Extract exactly one rectangular defined-name destination."""
+        """Extract exactly one rectangular defined-name destination.
+
+        Args:
+            name: Defined name matched case-insensitively.
+            sheet: Optional exact worksheet name used to filter destinations.
+            header: Zero-based row offset within the range to use as headers, or
+                ``None`` to generate column names.
+        """
 
         match = self.find_named_ranges(name, sheet=sheet, header=header).require_one()
         return self.extract(match)
@@ -388,6 +428,14 @@ class ExcelReader:
         The sequence form is the original convenience API. Passing a
         ``TableQuery`` enables aliases, optional headers, scoped searches,
         disambiguation, and explicit body-boundary policies.
+
+        Args:
+            headers: Required header names or a complete structured query.
+            sheet: Optional exact worksheet name for the sequence convenience API.
+            allow_non_adjacent_columns: Whether matched header columns may have gaps
+                in the sequence convenience API.
+            max_blank_rows: Consecutive blank rows that end an inferred body in the
+                sequence convenience API.
         """
 
         self._require_open()
@@ -424,12 +472,20 @@ class ExcelReader:
         return self.query_tables(query)
 
     def query_tables(self, query: TableQuery) -> MatchSet:
-        """Find tables satisfying a reusable structured query."""
+        """Find tables satisfying a reusable structured query.
+
+        Args:
+            query: Structured header, scope, and body-boundary requirements.
+        """
 
         return self._query_tables(query)
 
     def explain(self, query: TableQuery) -> DiscoveryReport:
-        """Run a query and report how every interesting candidate was handled."""
+        """Run a query and report how every interesting candidate was handled.
+
+        Args:
+            query: Structured header, scope, and body-boundary requirements.
+        """
 
         trace = _DiscoveryTrace.create()
         result = self._query_tables(query, trace=trace)
@@ -761,7 +817,11 @@ class ExcelReader:
         return MatchSet(tuple(matches), tuple(diagnostics))
 
     def extract(self, match: TableMatch) -> TableData:
-        """Extract the selected logical columns from a discovered match."""
+        """Extract the selected logical columns from a discovered match.
+
+        Args:
+            match: Discovered or explicitly constructed table boundary to extract.
+        """
 
         worksheet = self._sheet(match.sheet)
         hidden_rows = self._hidden_rows(worksheet)
@@ -789,7 +849,13 @@ class ExcelReader:
         *,
         include_styled_blanks: bool = False,
     ) -> SheetData:
-        """Return a sparse, coordinate-preserving worksheet snapshot."""
+        """Return a sparse, coordinate-preserving worksheet snapshot.
+
+        Args:
+            sheet: Exact worksheet name to read.
+            include_styled_blanks: Whether blank cells with styles are included in
+                the sparse cell collection and apparent bounds.
+        """
 
         worksheet = self._sheet(sheet)
         self._enforce_scan_limit(worksheet)

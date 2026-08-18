@@ -200,7 +200,12 @@ def _find(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the command-line interface and return a process-compatible exit code."""
+    """Run the command-line interface and return a process-compatible exit code.
+
+    Args:
+        argv: Command-line arguments without the executable name. Uses
+            :data:`sys.argv` when omitted.
+    """
 
     parser = _parser()
     args = parser.parse_args(argv)

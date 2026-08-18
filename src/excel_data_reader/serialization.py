@@ -21,6 +21,9 @@ def to_jsonable(value: Any) -> Any:
 
     Scalars that JSON cannot represent without losing their type use a small
     tagged object with ``$type`` and ``value`` keys.
+
+    Args:
+        value: Public model, container, or Excel scalar to convert.
     """
 
     if value is None or isinstance(value, (str, int, bool)):
@@ -57,7 +60,13 @@ def to_jsonable(value: Any) -> Any:
 
 
 def to_json(value: Any, *, indent: int | None = None) -> str:
-    """Serialize public values without non-standard JSON constants."""
+    """Serialize public values without non-standard JSON constants.
+
+    Args:
+        value: Public model, container, or Excel scalar to serialize.
+        indent: Number of spaces used for pretty-printing, or ``None`` for
+            compact output.
+    """
 
     return json.dumps(
         to_jsonable(value),

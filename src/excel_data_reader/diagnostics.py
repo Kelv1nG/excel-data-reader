@@ -64,7 +64,12 @@ class ExcelDataReaderError(ValueError):
     """Raised when a caller asks for a result that cannot be returned safely."""
 
     def __init__(self, diagnostics: Diagnostic | Iterable[Diagnostic]):
-        """Store one or more diagnostics and build the exception message."""
+        """Store one or more diagnostics and build the exception message.
+
+        Args:
+            diagnostics: One diagnostic or an iterable of diagnostics explaining
+                the failure.
+        """
 
         normalized = (diagnostics,) if isinstance(diagnostics, Diagnostic) else tuple(diagnostics)
         if not normalized:
