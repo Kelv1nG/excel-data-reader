@@ -1,7 +1,7 @@
 [project]
 name = "excel-data-reader"
-version = "0.4.0"
-description = "Deterministic discovery and extraction of tabular data from XLSX workbooks"
+version = "0.5.0"
+description = "Deterministic discovery and extraction of tabular data from Excel workbooks"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

@@ -12,7 +12,7 @@
 
 - Target CPython 3.12 only.
 - Use `uv` for environments, dependency management, locking, and command execution.
-- Keep `openpyxl` at the workbook-adapter boundary.
+- Keep `openpyxl` at the OOXML adapter boundary and `xlrd` at the legacy BIFF adapter boundary.
 - Keep upload validation, execution control, and response serialization in the platform service
   boundary rather than mixing them into discovery semantics.
 

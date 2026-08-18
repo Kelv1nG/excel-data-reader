@@ -2,9 +2,10 @@
 
 ## Purpose
 
-`excel-data-reader` discovers and extracts tabular values from `.xlsx`-family workbooks without
-pretending that every populated worksheet is one table. It preserves worksheet coordinates,
-reports ambiguous discovery, and keeps `openpyxl` behind its public model.
+`excel-data-reader` discovers and extracts tabular values from Excel 97-2003 `.xls` and
+`.xlsx`-family workbooks without pretending that every populated worksheet is one table. It
+preserves worksheet coordinates, reports ambiguous discovery, and keeps format adapters behind
+its public model.
 
 ## Supported discovery sources
 
@@ -18,6 +19,9 @@ The MVP supports:
 Native Excel Tables take precedence over an equivalent header-only candidate. Dynamic,
 constant-valued, non-rectangular, and multi-destination defined names remain visible in inventory
 but are not silently collapsed into one table.
+
+Native Excel Tables are OOXML-only in this implementation. The legacy adapter can expose
+resolvable rectangular `.xls` defined names but does not synthesize native-table metadata.
 
 ## Header normalization
 
@@ -112,7 +116,7 @@ raise the limit deliberately.
 
 ## Platform analysis contract
 
-`analyze_workbook()` and `analyze_workbook_bytes()` expose analysis schema `1.0`. Each
+`analyze_workbook()` and `analyze_workbook_bytes()` expose analysis schema `1.1`. Each
 `AnalysisResponse` includes the typed-value schema version, request identifier, sanitized source
 name, operation, status, diagnostics, and any inventory, discovery, extracted-table, or archive
 inspection result produced before completion. Host paths are never part of the response.
@@ -128,11 +132,12 @@ and invalid function argument types remain programmer errors.
 
 ## Untrusted workbook policy
 
-Before OpenPyXL parses a service input, `WorkbookPolicy` validates the allowed extension, file
-size, ZIP signature, entry count, individual and aggregate expanded size, compression ratio,
-member-name safety, supported compression methods, encryption flags, and required OOXML package
-members. Macros and external links are rejected by default. `defusedxml` is a runtime dependency
-for XML entity-expansion protection.
+Before a format adapter parses a service input, `WorkbookPolicy` validates the allowed extension,
+file size, and format signature. OOXML inputs additionally validate the ZIP entry count,
+individual and aggregate expanded size, compression ratio, member-name safety, supported
+compression methods, encryption flags, and required package members. OOXML macros and external
+links are rejected by default. `defusedxml` is a runtime dependency for XML entity-expansion
+protection.
 
 `analyze_workbook_bytes()` accepts bytes-like values or a binary stream. It copies at most the
 configured file-size limit into a generated temporary directory, uses only the sanitized basename
@@ -149,9 +154,26 @@ each service call. Checkpoints run during upload copying, archive inspection and
 opening boundaries, worksheet and native-table iteration, header-row scanning, body inference,
 and row extraction. Cancellation takes precedence when both signals are observed.
 
-Timeouts are cooperative and therefore cannot interrupt one blocking OpenPyXL parse call. A
+Timeouts are cooperative and therefore cannot interrupt one blocking format-adapter parse call. A
 cancelled or expired operation returns the corresponding stable status and diagnostic, while
 context-managed workbook handles and staged uploads are cleaned up.
+
+## Legacy XLS behavior
+
+Excel 97-2003 `.xls` files are read through `xlrd` and copied into the internal worksheet surface
+used by discovery and extraction. The adapter retains sheet names and visibility, populated cell
+coordinates, scalar values, dates, booleans, error values, number formats, merged rectangles,
+hidden rows and columns, and resolvable rectangular defined names.
+
+The adapter exposes formula cells as stored calculation results because formula source text is not
+available. It does not expose native Excel Tables, macros, embedded objects, filters, comments,
+hyperlinks, pivot tables, conditional formatting, or data validation. Every successfully opened
+legacy workbook therefore carries a `LEGACY_XLS_LIMITED` warning. Password-protected or malformed
+compound documents are rejected with stable diagnostics.
+
+`WorkbookInspection.format` distinguishes `ooxml` from `xls`. Archive-size and compression fields,
+plus macro and external-link detection, are `null` for `.xls` because those checks are specific to
+OOXML ZIP packages. `.xlsb` is not supported.
 
 ## Acceptance corpus
 

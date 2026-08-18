@@ -1,7 +1,7 @@
 # Excel Data Reader
 
 A Python 3.12 library for deterministic table discovery and coordinate-preserving extraction from
-`.xlsx`, `.xlsm`, `.xltx`, and `.xltm` workbooks.
+Excel 97-2003 `.xls` and OOXML `.xlsx`, `.xlsm`, `.xltx`, and `.xltm` workbooks.
 
 The reader distinguishes native Excel Tables, named ranges, explicit ranges, and header-discovered
 regions. It reports ambiguity instead of choosing an arbitrary result, supports non-adjacent
@@ -75,19 +75,53 @@ response includes an analysis schema version, typed-value schema version, saniti
 optional workbook inventory, discovery evidence, bounded extracted rows, stable diagnostics, and
 archive inspection metadata. Full host paths are not returned.
 
-The default `WorkbookPolicy` permits OOXML extensions, caps compressed and expanded sizes,
-archive entries, member sizes, member-name length, and compression ratio, and rejects unsafe ZIP
-paths, encryption, macros, and external links. Byte uploads are staged under a generated temporary
-directory and removed before the function returns. Customize the policy explicitly when a trusted
-workflow requires macros or external links.
+The default `WorkbookPolicy` permits supported Excel extensions and applies a file-size and
+signature check to every input. OOXML files receive additional compressed and expanded size,
+archive-entry, member-size, member-name, compression-ratio, unsafe-path, encryption, macro, and
+external-link checks. Byte uploads are staged under a generated temporary directory and removed
+before the function returns. Customize the policy explicitly when a trusted OOXML workflow
+requires macros or external links.
 
 Cancellation and timeouts are cooperative: they are checked while copying, inspecting, hashing,
-scanning, inferring bodies, and extracting rows. They cannot preempt a single blocking OpenPyXL
-parse call. Run analysis in a resource-limited worker process when the platform requires a hard
+scanning, inferring bodies, and extracting rows. They cannot preempt a blocking parse call inside
+a format adapter. Run analysis in a resource-limited worker process when the platform requires a hard
 wall-clock, CPU, or memory boundary. File validation is defense in depth, not malware scanning;
 see the [OWASP File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html),
 [Python ZIP-file guidance](https://docs.python.org/3/library/zipfile.html), and
 [OpenPyXL security notes](https://openpyxl.readthedocs.io/en/stable/index.html).
+
+## Legacy `.xls` workbooks
+
+`.xls` is the binary Excel 97-2003 BIFF format, not an `.xlsx` file with a different suffix. The
+reader uses a dedicated `xlrd` adapter and then exposes the same immutable models and operations:
+
+```python
+from excel_data_reader import ExcelReader, WorkbookFormat
+
+with ExcelReader.open("legacy-orders.xls") as workbook:
+    assert workbook.workbook_format is WorkbookFormat.LEGACY_XLS
+    match = workbook.find_tables(
+        ["customer id", "invoice date", "amount"],
+        sheet="Legacy Orders",
+    ).require_one()
+    table = workbook.extract(match)
+```
+
+Header discovery, aliases, optional and scattered columns, body policies, explicit/headerless
+ranges, sparse sheet reads, dates, booleans, cell errors, merged ranges, hidden rows and columns,
+and resolvable rectangular defined names use the normal reader contract. Path and byte-upload
+service APIs both support `.xls`.
+
+Legacy formula text is unavailable; formula cells are exposed as their last stored calculation
+result. Native Excel Tables, macros, embedded objects, filters, and other BIFF features not exposed
+by `xlrd` are omitted. The reader and service attach a `LEGACY_XLS_LIMITED` warning rather than
+hiding this difference. Password-protected `.xls` files are rejected. See the
+[xlrd compatibility documentation](https://pypi.org/project/xlrd/) for its underlying format
+limits.
+
+For an `.xls` inspection, ZIP-specific fields and macro/external-link detection are `null` because
+BIFF uses an OLE compound container rather than an OOXML archive. The adapter never executes
+formulas or macros. `.xlsb` is a separate binary format and remains unsupported.
 
 ## Structured queries
 
@@ -155,6 +189,7 @@ The installed package includes an inspection and discovery CLI:
 ```powershell
 excel-data-reader inspect orders.xlsx
 excel-data-reader inspect orders.xlsx --json
+excel-data-reader inspect legacy-orders.xls
 
 excel-data-reader find orders.xlsx `
   --headers "customer id,amount" `
@@ -215,6 +250,7 @@ demonstrating:
 - aliases, optional headers, location hints, and body policies;
 - explainable discovery reports and command-line inspection.
 - the versioned platform service with bounded uploaded-byte handling.
+- direct Excel 97-2003 `.xls` discovery through the legacy adapter.
 
 Start with [`examples/README.md`](examples/README.md), or run:
 

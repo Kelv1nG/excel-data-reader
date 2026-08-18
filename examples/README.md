@@ -14,6 +14,7 @@ uv run python examples/03_named_and_headerless.py
 uv run python examples/04_table_query.py
 uv run python examples/05_explain_query.py
 uv run python examples/06_platform_upload.py
+uv run python examples/07_legacy_xls.py
 ```
 
 Rebuild all workbooks:
@@ -108,3 +109,11 @@ Workbook: `workbooks/scattered_headers.xlsx`
 a cooperative timeout, requests bounded row extraction, and prints the stable response status,
 inspection hash, logical columns, and row count. The same service also accepts an open binary
 stream without loading the entire upload into memory.
+
+## 7. Legacy Excel 97-2003 workbook
+
+Workbook: `workbooks/legacy_scattered.xls`
+
+`07_legacy_xls.py` opens a genuine BIFF8 `.xls` file, displays the explicit legacy-compatibility
+warning, finds non-adjacent header columns, and extracts source-addressed values through the same
+`ExcelReader` API used for OOXML workbooks.

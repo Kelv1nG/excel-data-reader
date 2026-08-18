@@ -2,6 +2,7 @@
 
 `manifest.json` is the checked-in seed corpus. Each case names a workbook operation and asserts
 the discovered source, range, projected columns, row count, and representative source cells.
+The seed corpus covers both OOXML and a genuine Excel 97-2003 BIFF8 workbook.
 
 Add anonymized production workbooks only when they are safe to commit. Put each workbook beside a
 new manifest or reference it with a path relative to that manifest. To run a private local corpus
