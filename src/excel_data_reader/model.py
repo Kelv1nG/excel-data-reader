@@ -133,7 +133,11 @@ class TableQuery:
 
     @staticmethod
     def _headers_tuple(values: Sequence[str] | str) -> tuple[str, ...]:
-        """Coerce one header or a header sequence into an immutable tuple."""
+        """Coerce one header or a header sequence into an immutable tuple.
+
+        Args:
+            values: Single header string or ordered header sequence.
+        """
 
         if isinstance(values, str):
             return (values,)
@@ -141,7 +145,11 @@ class TableQuery:
 
 
 def _column_letters(index: int) -> str:
-    """Convert a positive one-based column index to Excel letters."""
+    """Convert a positive one-based column index to Excel letters.
+
+    Args:
+        index: Positive one-based worksheet column index.
+    """
 
     letters = ""
     while index:

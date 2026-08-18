@@ -37,7 +37,12 @@ def load_legacy_workbook(
     *,
     checkpoint: Callable[[], None] | None = None,
 ) -> LegacyLoadResult:
-    """Load an XLS workbook into the adapter-neutral OpenPyXL worksheet surface."""
+    """Load an XLS workbook into the adapter-neutral OpenPyXL worksheet surface.
+
+    Args:
+        path: Filesystem path to an Excel 97-2003 workbook.
+        checkpoint: Optional callback invoked during long-running work.
+    """
 
     _checkpoint(checkpoint)
     try:
@@ -108,7 +113,14 @@ def _copy_sheet(
     *,
     checkpoint: Callable[[], None] | None,
 ) -> None:
-    """Copy supported BIFF worksheet values and structural metadata."""
+    """Copy supported BIFF worksheet values and structural metadata.
+
+    Args:
+        source_book: Source xlrd workbook used for formats and date conversion.
+        source_sheet: Source xlrd worksheet to copy.
+        target_sheet: Destination OpenPyXL worksheet.
+        checkpoint: Optional callback invoked while rows are copied.
+    """
 
     for row_index in range(source_sheet.nrows):
         _checkpoint(checkpoint)
@@ -146,7 +158,13 @@ def _copy_defined_names(
     *,
     checkpoint: Callable[[], None] | None,
 ) -> None:
-    """Copy resolvable rectangular BIFF names into OpenPyXL definitions."""
+    """Copy resolvable rectangular BIFF names into OpenPyXL definitions.
+
+    Args:
+        source: Source xlrd workbook containing BIFF names.
+        target: Destination OpenPyXL workbook.
+        checkpoint: Optional callback invoked while names are copied.
+    """
 
     for source_name in source.name_obj_list:
         _checkpoint(checkpoint)
@@ -171,7 +189,12 @@ def _copy_defined_names(
 
 
 def _cell_value(source: xlrd.book.Book, cell: xlrd.sheet.Cell):
-    """Convert an xlrd cell into the corresponding public Python scalar."""
+    """Convert an xlrd cell into the corresponding public Python scalar.
+
+    Args:
+        source: Source workbook providing the date-system setting.
+        cell: Source xlrd cell to convert.
+    """
 
     if cell.ctype == xlrd.XL_CELL_DATE:
         return xlrd.xldate_as_datetime(cell.value, source.datemode)
@@ -183,7 +206,12 @@ def _cell_value(source: xlrd.book.Book, cell: xlrd.sheet.Cell):
 
 
 def _number_format(source: xlrd.book.Book, xf_index: int) -> str | None:
-    """Return an XLS number format string when the XF record resolves."""
+    """Return an XLS number format string when the XF record resolves.
+
+    Args:
+        source: Source workbook containing XF and format records.
+        xf_index: Zero-based XF record index for the source cell.
+    """
 
     try:
         format_key = source.xf_list[xf_index].format_key
@@ -193,13 +221,21 @@ def _number_format(source: xlrd.book.Book, xf_index: int) -> str | None:
 
 
 def _sheet_state(visibility: int) -> str:
-    """Map BIFF visibility flags to OpenPyXL worksheet state values."""
+    """Map BIFF visibility flags to OpenPyXL worksheet state values.
+
+    Args:
+        visibility: BIFF visibility flag from the source worksheet.
+    """
 
     return {0: "visible", 1: "hidden", 2: "veryHidden"}.get(visibility, "visible")
 
 
 def _legacy_error_message(code: DiagnosticCode) -> str:
-    """Return a path-safe public message for a legacy parsing failure."""
+    """Return a path-safe public message for a legacy parsing failure.
+
+    Args:
+        code: Stable diagnostic code identifying the parsing failure.
+    """
 
     if code is DiagnosticCode.ENCRYPTED_WORKBOOK:
         return "password-protected legacy XLS workbooks are not supported"
@@ -207,7 +243,11 @@ def _legacy_error_message(code: DiagnosticCode) -> str:
 
 
 def _checkpoint(callback: Callable[[], None] | None) -> None:
-    """Invoke a cooperative execution checkpoint when one is configured."""
+    """Invoke a cooperative execution checkpoint when one is configured.
+
+    Args:
+        callback: Optional zero-argument checkpoint callback.
+    """
 
     if callback is not None:
         callback()

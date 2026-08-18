@@ -221,7 +221,13 @@ def _validate_members(
     *,
     checkpoint: Callable[[], None] | None,
 ) -> None:
-    """Reject unsafe, encrypted, oversized, or unusually compressed ZIP members."""
+    """Reject unsafe, encrypted, oversized, or unusually compressed ZIP members.
+
+    Args:
+        members: Archive member metadata to validate.
+        policy: Resource and feature limits applied to the members.
+        checkpoint: Optional callback invoked while members are inspected.
+    """
 
     if len(members) > policy.max_archive_entries:
         _reject(
@@ -284,7 +290,11 @@ def _validate_members(
 
 
 def _compression_ratio(member: ZipInfo) -> float:
-    """Return an archive member's expanded-to-compressed size ratio."""
+    """Return an archive member's expanded-to-compressed size ratio.
+
+    Args:
+        member: Archive member whose sizes are compared.
+    """
 
     if member.file_size == 0:
         return 1.0
@@ -294,7 +304,12 @@ def _compression_ratio(member: ZipInfo) -> float:
 
 
 def _sha256(path: Path, *, checkpoint: Callable[[], None] | None) -> str:
-    """Hash a workbook incrementally while honoring cooperative checkpoints."""
+    """Hash a workbook incrementally while honoring cooperative checkpoints.
+
+    Args:
+        path: Filesystem path to hash.
+        checkpoint: Optional callback invoked between chunks.
+    """
 
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -305,13 +320,22 @@ def _sha256(path: Path, *, checkpoint: Callable[[], None] | None) -> str:
 
 
 def _checkpoint(callback: Callable[[], None] | None) -> None:
-    """Invoke a cooperative execution checkpoint when one is configured."""
+    """Invoke a cooperative execution checkpoint when one is configured.
+
+    Args:
+        callback: Optional zero-argument checkpoint callback.
+    """
 
     if callback is not None:
         callback()
 
 
 def _reject(code: DiagnosticCode, message: str) -> None:
-    """Raise a workbook-policy rejection with one stable diagnostic."""
+    """Raise a workbook-policy rejection with one stable diagnostic.
+
+    Args:
+        code: Stable diagnostic code for the policy violation.
+        message: Path-safe explanation suitable for callers.
+    """
 
     raise WorkbookRejectedError(Diagnostic(code, message))

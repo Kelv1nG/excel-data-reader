@@ -284,7 +284,17 @@ def _analyze_path(
     policy: WorkbookPolicy,
     budget: _AnalysisBudget,
 ) -> AnalysisResponse:
-    """Run validated path analysis and convert expected failures into responses."""
+    """Run validated path analysis and convert expected failures into responses.
+
+    Args:
+        workbook_path: Filesystem path to the staged or caller-owned workbook.
+        request: Validated analysis operation to perform.
+        source_name: Sanitized filename exposed in response metadata.
+        max_scan_cells: Maximum worksheet cells inspected per discovery scan.
+        max_candidates: Maximum discovery candidates retained in a response.
+        policy: Validation policy applied before workbook parsing.
+        budget: Active cancellation and deadline budget.
+    """
 
     inspection: WorkbookInspection | None = None
     try:
@@ -413,7 +423,18 @@ def _response(
     diagnostics: tuple[Diagnostic, ...] = (),
     inspection: WorkbookInspection | None = None,
 ) -> AnalysisResponse:
-    """Construct a response with all schema and request metadata populated."""
+    """Construct a response with all schema and request metadata populated.
+
+    Args:
+        source_name: Sanitized filename exposed in response metadata.
+        request: Analysis request associated with the response.
+        status: Stable result status for the operation.
+        inventory: Optional workbook structure discovered during analysis.
+        discovery: Optional explainable table-discovery report.
+        tables: Extracted table rows included in the response.
+        diagnostics: Stable warnings and errors produced during analysis.
+        inspection: Optional pre-parse container inspection metadata.
+    """
 
     return AnalysisResponse(
         schema_version=ANALYSIS_SCHEMA_VERSION,
@@ -437,7 +458,14 @@ def _write_upload(
     max_file_size: int,
     checkpoint: Callable[[], None],
 ) -> None:
-    """Copy bytes or a binary stream to disk without exceeding the file limit."""
+    """Copy bytes or a binary stream to disk without exceeding the file limit.
+
+    Args:
+        data: Workbook bytes or binary stream to copy.
+        path: Destination path for the staged upload.
+        max_file_size: Maximum number of bytes accepted.
+        checkpoint: Callback invoked between streamed chunks.
+    """
 
     total = 0
     with path.open("wb") as destination:
@@ -463,7 +491,12 @@ def _write_upload(
 
 
 def _reject_large_upload(actual_size: int, maximum_size: int) -> None:
-    """Raise the stable rejection used when upload copying crosses its limit."""
+    """Raise the stable rejection used when upload copying crosses its limit.
+
+    Args:
+        actual_size: Number of bytes observed when the limit was crossed.
+        maximum_size: Maximum allowed upload size in bytes.
+    """
 
     raise WorkbookRejectedError(
         Diagnostic(
@@ -474,7 +507,11 @@ def _reject_large_upload(actual_size: int, maximum_size: int) -> None:
 
 
 def _source_name(filename: str) -> str:
-    """Return a control-free bounded basename safe for response metadata."""
+    """Return a control-free bounded basename safe for response metadata.
+
+    Args:
+        filename: Untrusted original upload filename.
+    """
 
     normalized = filename.replace("\\", "/")
     basename = normalized.rsplit("/", maxsplit=1)[-1].strip()

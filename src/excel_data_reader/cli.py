@@ -66,13 +66,21 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _csv_headers(value: str) -> tuple[str, ...]:
-    """Split a comma-delimited header option and discard empty items."""
+    """Split a comma-delimited header option and discard empty items.
+
+    Args:
+        value: Raw comma-delimited command-line option.
+    """
 
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
 def _aliases(values: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
-    """Parse repeatable FIELD=ALIAS|ALIAS options into immutable aliases."""
+    """Parse repeatable FIELD=ALIAS|ALIAS options into immutable aliases.
+
+    Args:
+        values: Raw repeatable alias options supplied by the caller.
+    """
 
     parsed: dict[str, list[str]] = {}
     for value in values:
@@ -85,7 +93,11 @@ def _aliases(values: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
 
 
 def _body_policy(args: argparse.Namespace) -> BodyPolicy:
-    """Translate body-boundary CLI options into a validated policy."""
+    """Translate body-boundary CLI options into a validated policy.
+
+    Args:
+        args: Parsed command-line namespace containing body options.
+    """
 
     if args.body == "blank-rows":
         if args.bottom_row is not None:
@@ -101,7 +113,11 @@ def _body_policy(args: argparse.Namespace) -> BodyPolicy:
 
 
 def _query(args: argparse.Namespace) -> TableQuery:
-    """Build a structured table query from parsed command-line options."""
+    """Build a structured table query from parsed command-line options.
+
+    Args:
+        args: Parsed command-line namespace containing discovery options.
+    """
 
     return TableQuery(
         required_headers=_csv_headers(args.headers),
@@ -116,7 +132,12 @@ def _query(args: argparse.Namespace) -> TableQuery:
 
 
 def _print_inventory(path: Path, inventory: WorkbookInventory) -> None:
-    """Render workbook inventory as concise human-readable text."""
+    """Render workbook inventory as concise human-readable text.
+
+    Args:
+        path: Workbook path shown in the report heading.
+        inventory: Workbook structure to render.
+    """
 
     print(f"Workbook: {path}")
     print(f"Sheets ({len(inventory.sheets)}):")
@@ -134,7 +155,12 @@ def _print_inventory(path: Path, inventory: WorkbookInventory) -> None:
 
 
 def _print_report(path: Path, report: DiscoveryReport) -> None:
-    """Render discovery scans, candidates, matches, and diagnostics as text."""
+    """Render discovery scans, candidates, matches, and diagnostics as text.
+
+    Args:
+        path: Workbook path shown in the report heading.
+        report: Explainable discovery result to render.
+    """
 
     print(f"Workbook: {path}")
     print("Scans:")
@@ -173,7 +199,11 @@ def _print_report(path: Path, report: DiscoveryReport) -> None:
 
 
 def _inspect(args: argparse.Namespace) -> int:
-    """Execute the inspect subcommand and return its exit code."""
+    """Execute the inspect subcommand and return its exit code.
+
+    Args:
+        args: Parsed inspect-subcommand arguments.
+    """
 
     with ExcelReader.open(args.workbook) as reader:
         inventory = reader.inventory()
@@ -185,7 +215,11 @@ def _inspect(args: argparse.Namespace) -> int:
 
 
 def _find(args: argparse.Namespace) -> int:
-    """Execute table discovery and map match cardinality to an exit code."""
+    """Execute table discovery and map match cardinality to an exit code.
+
+    Args:
+        args: Parsed find-subcommand arguments.
+    """
 
     query = _query(args)
     with ExcelReader.open(args.workbook) as reader:
