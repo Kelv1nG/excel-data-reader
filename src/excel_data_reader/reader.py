@@ -19,6 +19,7 @@ from excel_data_reader.diagnostics import (
     ExcelDataReaderError,
     Severity,
 )
+from excel_data_reader.legacy import load_legacy_workbook
 from excel_data_reader.model import (
     BodyPolicy,
     BodyPolicyMode,
@@ -45,6 +46,7 @@ from excel_data_reader.model import (
     TableMatch,
     TableQuery,
     ValueMode,
+    WorkbookFormat,
     WorkbookInventory,
 )
 from excel_data_reader.normalization import normalize_header
@@ -98,6 +100,8 @@ class ExcelReader:
         max_scan_cells: int,
         max_candidates: int,
         checkpoint: Callable[[], None] | None,
+        workbook_format: WorkbookFormat,
+        diagnostics: tuple[Diagnostic, ...],
     ) -> None:
         self.path = path
         self._workbook = workbook
@@ -106,6 +110,8 @@ class ExcelReader:
         self.max_scan_cells = max_scan_cells
         self.max_candidates = max_candidates
         self._checkpoint_callback = checkpoint
+        self.workbook_format = workbook_format
+        self.diagnostics = diagnostics
         self._closed = False
 
     @classmethod
@@ -129,6 +135,19 @@ class ExcelReader:
         if checkpoint is not None:
             checkpoint()
         workbook_path = Path(path)
+        if workbook_path.suffix.casefold() == ".xls":
+            legacy = load_legacy_workbook(workbook_path, checkpoint=checkpoint)
+            return cls(
+                workbook_path,
+                legacy.workbook,
+                None,
+                value_mode=mode,
+                max_scan_cells=max_scan_cells,
+                max_candidates=max_candidates,
+                checkpoint=checkpoint,
+                workbook_format=WorkbookFormat.LEGACY_XLS,
+                diagnostics=legacy.diagnostics,
+            )
         workbook = load_workbook(
             workbook_path,
             read_only=False,
@@ -161,6 +180,8 @@ class ExcelReader:
             max_scan_cells=max_scan_cells,
             max_candidates=max_candidates,
             checkpoint=checkpoint,
+            workbook_format=WorkbookFormat.OOXML,
+            diagnostics=(),
         )
 
     def __enter__(self) -> ExcelReader:

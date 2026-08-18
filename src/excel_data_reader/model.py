@@ -22,6 +22,11 @@ class ValueMode(StrEnum):
     BOTH = "both"
 
 
+class WorkbookFormat(StrEnum):
+    OOXML = "ooxml"
+    LEGACY_XLS = "xls"
+
+
 class MatchSource(StrEnum):
     EXPLICIT_RANGE = "explicit_range"
     NATIVE_TABLE = "native_table"

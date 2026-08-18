@@ -21,6 +21,7 @@ from excel_data_reader.diagnostics import (
     DiagnosticCode,
     ExcelDataReaderError,
 )
+from excel_data_reader.model import WorkbookFormat
 
 _MIB = 1024 * 1024
 _OLE_COMPOUND_MAGIC = bytes.fromhex("D0CF11E0A1B11AE1")
@@ -36,7 +37,7 @@ class WorkbookRejectedError(ExcelDataReaderError):
 @dataclass(frozen=True)
 class WorkbookPolicy:
     allowed_extensions: frozenset[str] = field(
-        default_factory=lambda: frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
+        default_factory=lambda: frozenset({".xls", ".xlsx", ".xlsm", ".xltx", ".xltm"})
     )
     max_file_size: int = 50 * _MIB
     max_archive_entries: int = 10_000
@@ -71,16 +72,17 @@ class WorkbookPolicy:
 
 @dataclass(frozen=True)
 class WorkbookInspection:
+    format: WorkbookFormat
     extension: str
     file_size: int
     sha256: str
-    archive_entries: int
-    compressed_size: int
-    uncompressed_size: int
-    largest_member_size: int
-    maximum_compression_ratio: float
-    has_macros: bool
-    has_external_links: bool
+    archive_entries: int | None
+    compressed_size: int | None
+    uncompressed_size: int | None
+    largest_member_size: int | None
+    maximum_compression_ratio: float | None
+    has_macros: bool | None
+    has_external_links: bool | None
 
 
 def inspect_workbook(
@@ -89,7 +91,7 @@ def inspect_workbook(
     *,
     checkpoint: Callable[[], None] | None = None,
 ) -> WorkbookInspection:
-    """Validate an OOXML archive without extracting it to the filesystem."""
+    """Validate a supported workbook container before parsing cell data."""
 
     workbook_path = Path(path)
     active_policy = policy or WorkbookPolicy()
@@ -118,6 +120,25 @@ def inspect_workbook(
 
     with workbook_path.open("rb") as stream:
         signature = stream.read(len(_OLE_COMPOUND_MAGIC))
+    if extension == ".xls":
+        if signature != _OLE_COMPOUND_MAGIC:
+            _reject(
+                DiagnosticCode.INVALID_LEGACY_WORKBOOK,
+                "file signature is not an Excel 97-2003 compound document",
+            )
+        return WorkbookInspection(
+            format=WorkbookFormat.LEGACY_XLS,
+            extension=extension,
+            file_size=stat.st_size,
+            sha256=_sha256(workbook_path, checkpoint=checkpoint),
+            archive_entries=None,
+            compressed_size=None,
+            uncompressed_size=None,
+            largest_member_size=None,
+            maximum_compression_ratio=None,
+            has_macros=None,
+            has_external_links=None,
+        )
     if signature == _OLE_COMPOUND_MAGIC:
         raise WorkbookRejectedError(
             Diagnostic(
@@ -170,6 +191,7 @@ def inspect_workbook(
         )
 
     return WorkbookInspection(
+        format=WorkbookFormat.OOXML,
         extension=extension,
         file_size=stat.st_size,
         sha256=_sha256(workbook_path, checkpoint=checkpoint),

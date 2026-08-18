@@ -11,6 +11,8 @@ from openpyxl.utils import get_column_letter, quote_sheetname
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.worksheet import Worksheet
+from xlwt import Workbook as LegacyWorkbook
+from xlwt import easyxf
 
 WORKBOOK_DIR = Path(__file__).parent / "workbooks"
 
@@ -268,11 +270,58 @@ def build_named_and_headerless(output_dir: Path) -> Path:
     return path
 
 
+def build_legacy_scattered(output_dir: Path) -> Path:
+    """Create an Excel 97-2003 workbook with scattered header columns."""
+
+    workbook = LegacyWorkbook()
+    sheet = workbook.add_sheet("Legacy Orders")
+    title_style = easyxf(
+        "font: bold on, colour white, height 320; "
+        "pattern: pattern solid, fore_colour dark_blue; "
+        "align: vert centre"
+    )
+    header_style = easyxf(
+        "font: bold on, colour white; pattern: pattern solid, fore_colour teal; align: vert centre"
+    )
+    date_style = easyxf(num_format_str="YYYY-MM-DD")
+    currency_style = easyxf(num_format_str='"$"#,##0.00')
+
+    sheet.write_merge(0, 0, 0, 6, "Orders — Legacy XLS", title_style)
+    sheet.write(1, 0, "Excel 97-2003 BIFF8 example with non-adjacent table columns.")
+    headers = ["Customer ID", "Region", "Notes", "Invoice Date", "Owner", "Status", "Amount"]
+    for column, value in enumerate(headers):
+        sheet.write(3, column, value, header_style)
+
+    rows = {
+        4: ("L-001", "North", date(2026, 5, 1), "Ava", 1250.0),
+        5: ("L-002", "South", date(2026, 5, 4), "Ben", 840.0),
+        7: ("L-003", "West", date(2026, 5, 9), "Chloe", 2190.0),
+    }
+    for row, values in rows.items():
+        customer_id, region, invoice_date, owner, amount = values
+        sheet.write(row, 0, customer_id)
+        sheet.write(row, 1, region)
+        sheet.write(row, 3, invoice_date, date_style)
+        sheet.write(row, 4, owner)
+        sheet.write(row, 6, amount, currency_style)
+
+    widths = {0: 16, 1: 14, 2: 10, 3: 16, 4: 16, 5: 12, 6: 15}
+    for column, width in widths.items():
+        sheet.col(column).width = width * 256
+    sheet.col(3).hidden = True
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "legacy_scattered.xls"
+    workbook.save(str(path))
+    return path
+
+
 def build_all(output_dir: Path = WORKBOOK_DIR) -> tuple[Path, ...]:
     return (
         build_native_table(output_dir),
         build_scattered_headers(output_dir),
         build_named_and_headerless(output_dir),
+        build_legacy_scattered(output_dir),
     )
 
 

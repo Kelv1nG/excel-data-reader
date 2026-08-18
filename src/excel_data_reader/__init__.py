@@ -37,6 +37,7 @@ from excel_data_reader.model import (
     TableMatch,
     TableQuery,
     ValueMode,
+    WorkbookFormat,
     WorkbookInventory,
 )
 from excel_data_reader.normalization import normalize_header
@@ -100,6 +101,7 @@ __all__ = [
     "TableMatch",
     "TableQuery",
     "ValueMode",
+    "WorkbookFormat",
     "WorkbookInspection",
     "WorkbookInventory",
     "WorkbookPolicy",

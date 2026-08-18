@@ -101,6 +101,28 @@
           "F8": 3.75
         }
       }
+    },
+    {
+      "id": "legacy-xls-scattered-columns",
+      "workbook": "../../examples/workbooks/legacy_scattered.xls",
+      "operation": "query",
+      "query": {
+        "required_headers": ["amount", "customer id", "invoice date"],
+        "sheet": "Legacy Orders",
+        "body": {"mode": "blank_rows", "blank_rows": 2}
+      },
+      "expected": {
+        "source": "header",
+        "range": "A4:G8",
+        "row_count": 4,
+        "source_columns": [7, 1, 4],
+        "cells": {
+          "G5": 1250.0,
+          "A5": "L-001",
+          "G7": null,
+          "G8": 2190.0
+        }
+      }
     }
   ]
 }

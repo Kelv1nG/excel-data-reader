@@ -18,6 +18,7 @@ def test_example_generator_builds_all_workbooks(tmp_path: Path) -> None:
         "native_table.xlsx",
         "scattered_headers.xlsx",
         "named_and_headerless.xlsx",
+        "legacy_scattered.xls",
     ]
     assert all(path.exists() for path in paths)
 
@@ -59,6 +60,17 @@ def test_checked_in_named_and_headerless_example() -> None:
         "column_4",
     ]
     assert raw.rows[0].cells[0].address == "C5"
+
+
+def test_checked_in_legacy_xls_example() -> None:
+    with ExcelReader.open(WORKBOOKS / "legacy_scattered.xls") as reader:
+        match = reader.find_tables(
+            ["customer id", "invoice date", "amount"],
+            sheet="Legacy Orders",
+        ).require_one()
+
+    assert match.range == "A4:G8"
+    assert [column.source_column for column in match.columns] == [1, 4, 7]
 
 
 def test_all_example_scripts_run() -> None:

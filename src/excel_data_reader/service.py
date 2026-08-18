@@ -23,6 +23,7 @@ from excel_data_reader.control import (
 )
 from excel_data_reader.diagnostics import Diagnostic, ExcelDataReaderError
 from excel_data_reader.diagnostics import DiagnosticCode as Code
+from excel_data_reader.legacy import LegacyWorkbookError
 from excel_data_reader.model import (
     DataRow,
     DiscoveryReport,
@@ -40,7 +41,7 @@ from excel_data_reader.security import (
 )
 from excel_data_reader.serialization import JSON_VALUE_SCHEMA_VERSION, to_json
 
-ANALYSIS_SCHEMA_VERSION = "1.0"
+ANALYSIS_SCHEMA_VERSION = "1.1"
 
 
 class AnalysisOperation(StrEnum):
@@ -261,6 +262,7 @@ def _analyze_path(
                     request,
                     AnalysisStatus.SUCCESS,
                     inventory=inventory,
+                    diagnostics=reader.diagnostics,
                     inspection=inspection,
                 )
 
@@ -294,7 +296,7 @@ def _analyze_path(
                 inventory=inventory,
                 discovery=discovery,
                 tables=tables,
-                diagnostics=discovery.diagnostics,
+                diagnostics=reader.diagnostics + discovery.diagnostics,
                 inspection=inspection,
             )
     except AnalysisCancelledError as error:
@@ -314,6 +316,14 @@ def _analyze_path(
             inspection=inspection,
         )
     except WorkbookRejectedError as error:
+        return _response(
+            source_name,
+            request,
+            AnalysisStatus.REJECTED,
+            diagnostics=error.diagnostics,
+            inspection=inspection,
+        )
+    except LegacyWorkbookError as error:
         return _response(
             source_name,
             request,

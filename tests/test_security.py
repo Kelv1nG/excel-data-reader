@@ -10,6 +10,7 @@ from excel_data_reader import (
     AnalysisRequest,
     AnalysisStatus,
     DiagnosticCode,
+    WorkbookFormat,
     WorkbookPolicy,
     WorkbookRejectedError,
     analyze_workbook,
@@ -42,9 +43,13 @@ def test_default_policy_accepts_a_normal_xlsx_and_reports_archive_metadata() -> 
     inspection = inspect_workbook(WORKBOOKS / "native_table.xlsx")
 
     assert inspection.extension == ".xlsx"
+    assert inspection.format is WorkbookFormat.OOXML
     assert inspection.file_size > 0
     assert len(inspection.sha256) == 64
+    assert inspection.archive_entries is not None
     assert inspection.archive_entries > 0
+    assert inspection.uncompressed_size is not None
+    assert inspection.compressed_size is not None
     assert inspection.uncompressed_size >= inspection.compressed_size
     assert inspection.has_macros is False
     assert inspection.has_external_links is False
@@ -145,3 +150,20 @@ def test_analysis_service_maps_corrupt_ooxml_to_rejected(tmp_path: Path) -> None
     assert response.status is AnalysisStatus.REJECTED
     assert response.diagnostics[0].code is DiagnosticCode.INVALID_WORKBOOK_ARCHIVE
     assert response.inspection is not None
+
+
+def test_policy_accepts_a_legacy_xls_compound_document() -> None:
+    inspection = inspect_workbook(WORKBOOKS / "legacy_scattered.xls")
+
+    assert inspection.format is WorkbookFormat.LEGACY_XLS
+    assert inspection.extension == ".xls"
+    assert inspection.archive_entries is None
+    assert inspection.compressed_size is None
+    assert inspection.has_macros is None
+
+
+def test_policy_rejects_non_compound_content_with_an_xls_extension(tmp_path: Path) -> None:
+    path = tmp_path / "fake.xls"
+    path.write_bytes(b"not an XLS workbook")
+
+    assert _diagnostic(path) is DiagnosticCode.INVALID_LEGACY_WORKBOOK

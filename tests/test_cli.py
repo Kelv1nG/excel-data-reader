@@ -111,3 +111,20 @@ def test_find_command_returns_three_for_ambiguity(tmp_path: Path, capsys) -> Non
 
     assert exit_code == 3
     assert "Matches (2):" in captured.out
+
+
+def test_find_command_supports_legacy_xls(capsys) -> None:
+    exit_code = main(
+        [
+            "find",
+            str(WORKBOOKS / "legacy_scattered.xls"),
+            "--headers",
+            "customer id,invoice date,amount",
+            "--sheet",
+            "Legacy Orders",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Legacy Orders!A4:G8" in captured.out
