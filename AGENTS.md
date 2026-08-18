@@ -13,6 +13,8 @@
 - Target CPython 3.12 only.
 - Use `uv` for environments, dependency management, locking, and command execution.
 - Keep `openpyxl` at the workbook-adapter boundary.
+- Keep upload validation, execution control, and response serialization in the platform service
+  boundary rather than mixing them into discovery semantics.
 
 ## Architecture
 
@@ -31,6 +33,8 @@
 - Run `uv run pytest`, `uv run ruff check src tests examples`,
   `uv run ruff format --check src tests examples`,
   and `uv run ty check` before handoff.
+- Treat service timeouts as cooperative. Recommend an isolated, resource-limited worker whenever
+  a caller requires hard execution limits.
 
 When validating private production workbooks, use `EXCEL_DATA_READER_ACCEPTANCE_MANIFEST` and do
 not add confidential files to the repository.

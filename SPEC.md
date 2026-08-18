@@ -110,6 +110,49 @@ Whole-sheet scans check the apparent rectangular cell count before iteration. Wo
 configured `max_scan_cells` fails with `SCAN_LIMIT_EXCEEDED`. Callers can use explicit ranges or
 raise the limit deliberately.
 
+## Platform analysis contract
+
+`analyze_workbook()` and `analyze_workbook_bytes()` expose analysis schema `1.0`. Each
+`AnalysisResponse` includes the typed-value schema version, request identifier, sanitized source
+name, operation, status, diagnostics, and any inventory, discovery, extracted-table, or archive
+inspection result produced before completion. Host paths are never part of the response.
+
+The inventory operation returns workbook-authored structure. The table-finding operation uses the
+same `TableQuery` and explainable discovery semantics as `ExcelReader.explain()`. Row extraction is
+opt-in and bounded by `max_output_rows`; ambiguous results are never extracted implicitly.
+
+Stable statuses are `success`, `no_match`, `ambiguous`, `rejected`, `error`, `cancelled`, and
+`timeout`. Expected policy, workbook, and reader failures are represented as response diagnostics
+instead of crossing the service boundary as library-specific exceptions. Invalid request objects
+and invalid function argument types remain programmer errors.
+
+## Untrusted workbook policy
+
+Before OpenPyXL parses a service input, `WorkbookPolicy` validates the allowed extension, file
+size, ZIP signature, entry count, individual and aggregate expanded size, compression ratio,
+member-name safety, supported compression methods, encryption flags, and required OOXML package
+members. Macros and external links are rejected by default. `defusedxml` is a runtime dependency
+for XML entity-expansion protection.
+
+`analyze_workbook_bytes()` accepts bytes-like values or a binary stream. It copies at most the
+configured file-size limit into a generated temporary directory, uses only the sanitized basename
+as response metadata, and removes the staged file and directory on every handled outcome.
+
+These checks are defense in depth, not antivirus or a complete sandbox. Production platforms that
+need hard memory, CPU, or wall-clock isolation must execute analysis in a resource-limited worker
+process.
+
+## Cooperative execution control
+
+`AnalysisControl` can provide a timeout and/or cancellation callback. A fresh budget begins for
+each service call. Checkpoints run during upload copying, archive inspection and hashing, workbook
+opening boundaries, worksheet and native-table iteration, header-row scanning, body inference,
+and row extraction. Cancellation takes precedence when both signals are observed.
+
+Timeouts are cooperative and therefore cannot interrupt one blocking OpenPyXL parse call. A
+cancelled or expired operation returns the corresponding stable status and diagnostic, while
+context-managed workbook handles and staged uploads are cleaned up.
+
 ## Acceptance corpus
 
 Workbook acceptance cases are described by a versioned JSON manifest. Every case asserts the

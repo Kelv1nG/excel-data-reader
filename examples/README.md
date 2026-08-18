@@ -13,6 +13,7 @@ uv run python examples/02_scattered_headers.py
 uv run python examples/03_named_and_headerless.py
 uv run python examples/04_table_query.py
 uv run python examples/05_explain_query.py
+uv run python examples/06_platform_upload.py
 ```
 
 Rebuild all workbooks:
@@ -98,3 +99,12 @@ Workbook: `workbooks/scattered_headers.xlsx`
 `05_explain_query.py` calls `reader.explain(query)` and prints the scan window, number of cells
 considered, observed header coordinates, selected candidate, and rejection reasons. The returned
 `DiscoveryReport` contains the same `MatchSet` that `query_tables()` would return.
+
+## 6. Platform upload service
+
+Workbook: `workbooks/scattered_headers.xlsx`
+
+`06_platform_upload.py` passes uploaded workbook bytes through `analyze_workbook_bytes()`, applies
+a cooperative timeout, requests bounded row extraction, and prints the stable response status,
+inspection hash, logical columns, and row count. The same service also accepts an open binary
+stream without loading the entire upload into memory.

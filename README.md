@@ -29,6 +29,66 @@ with ExcelReader.open("orders.xlsx") as workbook:
 The requested header order becomes the logical output order even if the physical worksheet
 columns are scattered.
 
+## Platform integration
+
+Use the versioned analysis service at an upload or job boundary. It accepts either a trusted
+filesystem path or uploaded bytes/a binary stream, applies an untrusted-workbook policy, and
+returns one JSON-serializable response shape for success, no match, ambiguity, rejection,
+cancellation, timeout, and reader errors:
+
+```python
+from excel_data_reader import (
+    AnalysisControl,
+    AnalysisRequest,
+    AnalysisStatus,
+    TableQuery,
+    analyze_workbook_bytes,
+)
+
+request = AnalysisRequest.find_tables(
+    TableQuery(
+        required_headers=("customer id", "amount"),
+        optional_headers=("invoice date",),
+        allow_non_adjacent_columns=True,
+    ),
+    include_rows=True,
+    max_output_rows=500,
+    request_id="job-42",
+)
+
+response = analyze_workbook_bytes(
+    uploaded_stream,
+    "customer-upload.xlsx",
+    request,
+    control=AnalysisControl(
+        timeout_seconds=10,
+        is_cancelled=lambda: job_was_cancelled,
+    ),
+)
+
+if response.status is AnalysisStatus.SUCCESS:
+    return response.to_json()
+```
+
+`analyze_workbook(path, request, ...)` provides the same contract for an existing file. The
+response includes an analysis schema version, typed-value schema version, sanitized source name,
+optional workbook inventory, discovery evidence, bounded extracted rows, stable diagnostics, and
+archive inspection metadata. Full host paths are not returned.
+
+The default `WorkbookPolicy` permits OOXML extensions, caps compressed and expanded sizes,
+archive entries, member sizes, member-name length, and compression ratio, and rejects unsafe ZIP
+paths, encryption, macros, and external links. Byte uploads are staged under a generated temporary
+directory and removed before the function returns. Customize the policy explicitly when a trusted
+workflow requires macros or external links.
+
+Cancellation and timeouts are cooperative: they are checked while copying, inspecting, hashing,
+scanning, inferring bodies, and extracting rows. They cannot preempt a single blocking OpenPyXL
+parse call. Run analysis in a resource-limited worker process when the platform requires a hard
+wall-clock, CPU, or memory boundary. File validation is defense in depth, not malware scanning;
+see the [OWASP File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html),
+[Python ZIP-file guidance](https://docs.python.org/3/library/zipfile.html), and
+[OpenPyXL security notes](https://openpyxl.readthedocs.io/en/stable/index.html).
+
 ## Structured queries
 
 Use `TableQuery` when workbook producers use different labels, some fields are optional, or the
@@ -154,6 +214,7 @@ demonstrating:
 - headerless ranges and sparse sheet reads;
 - aliases, optional headers, location hints, and body policies;
 - explainable discovery reports and command-line inspection.
+- the versioned platform service with bounded uploaded-byte handling.
 
 Start with [`examples/README.md`](examples/README.md), or run:
 

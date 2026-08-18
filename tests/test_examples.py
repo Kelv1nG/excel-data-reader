@@ -68,6 +68,7 @@ def test_all_example_scripts_run() -> None:
         "03_named_and_headerless.py",
         "04_table_query.py",
         "05_explain_query.py",
+        "06_platform_upload.py",
     ):
         completed = subprocess.run(
             [sys.executable, str(ROOT / "examples" / script)],
