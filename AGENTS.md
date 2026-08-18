@@ -5,6 +5,7 @@
 - `SPEC.md` defines discovery and extraction semantics.
 - `README.md` defines the public usage examples.
 - `pyproject.toml` defines dependencies and tooling.
+- `tests/acceptance/manifest.json` defines checked-in workbook acceptance expectations.
 - Update the specification before changing a public semantic contract.
 
 ## Environment
@@ -30,3 +31,6 @@
 - Run `uv run pytest`, `uv run ruff check src tests examples`,
   `uv run ruff format --check src tests examples`,
   and `uv run ty check` before handoff.
+
+When validating private production workbooks, use `EXCEL_DATA_READER_ACCEPTANCE_MANIFEST` and do
+not add confidential files to the repository.

@@ -69,6 +69,46 @@ Header-inferred tables support three body policies:
 
 Native Excel Tables always retain their authored boundaries.
 
+## Explainable discovery
+
+Use `explain()` when a platform needs to show why a table matched—or why it did not:
+
+```python
+with ExcelReader.open("orders.xlsx") as workbook:
+    report = workbook.explain(query)
+
+for scan in report.scans:
+    print(scan.sheet, scan.bounds, scan.cells_considered, scan.completed)
+
+for candidate in report.candidates:
+    print(candidate.selected, candidate.evidence, candidate.reasons)
+```
+
+`DiscoveryReport` includes the normal `MatchSet`, worksheet scan boundaries, header evidence with
+source coordinates, partial candidates, proximity distances, and stable rejection reasons. Report
+candidate collection is bounded by the reader's `max_candidates` safety limit.
+
+## Command line
+
+The installed package includes an inspection and discovery CLI:
+
+```powershell
+excel-data-reader inspect orders.xlsx
+excel-data-reader inspect orders.xlsx --json
+
+excel-data-reader find orders.xlsx `
+  --headers "customer id,amount" `
+  --optional "invoice date,owner" `
+  --alias "customer id=client no|account number" `
+  --sheet Orders `
+  --within A1:M5000 `
+  --near A20 `
+  --json
+```
+
+`find` exits with `0` for one match, `2` for no match or invalid input, and `3` for ambiguity. JSON
+output serializes the same public inventory and discovery-report models used by Python callers.
+
 ## Other deterministic entry points
 
 ```python
@@ -104,17 +144,23 @@ See [`SPEC.md`](SPEC.md) for the behavioral contract.
 
 ## Examples
 
-[`examples/`](examples/) contains runnable programs paired with real workbooks demonstrating:
+[`examples/`](examples/) contains runnable programs paired with generated example workbooks
+demonstrating:
 
 - native Excel Table extraction;
 - normalized header discovery across non-adjacent columns;
 - blank-row tolerance;
 - rectangular defined names;
-- headerless ranges and sparse sheet reads.
-- aliases, optional headers, location hints, and body policies.
+- headerless ranges and sparse sheet reads;
+- aliases, optional headers, location hints, and body policies;
+- explainable discovery reports and command-line inspection.
 
 Start with [`examples/README.md`](examples/README.md), or run:
 
 ```powershell
 uv run python examples/01_native_table.py
 ```
+
+The manifest-driven seed acceptance corpus lives under `tests/acceptance/`. A private production
+corpus can be included locally through `EXCEL_DATA_READER_ACCEPTANCE_MANIFEST` without committing
+its workbooks.

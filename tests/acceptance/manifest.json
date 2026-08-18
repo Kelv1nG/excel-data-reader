@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "native-orders-table",
+      "workbook": "../../examples/workbooks/native_table.xlsx",
+      "operation": "native_table",
+      "name": "OrdersTable",
+      "expected": {
+        "source": "native_table",
+        "range": "A4:F9",
+        "row_count": 4,
+        "source_columns": [1, 2, 3, 4, 5, 6],
+        "cells": {
+          "A5": "ORD-1001",
+          "F5": "=D5*E5",
+          "A8": "ORD-1004"
+        }
+      }
+    },
+    {
+      "id": "scattered-required-columns",
+      "workbook": "../../examples/workbooks/scattered_headers.xlsx",
+      "operation": "query",
+      "query": {
+        "required_headers": ["amount", "customer id", "invoice date"],
+        "sheet": "Scattered Orders",
+        "body": {"mode": "blank_rows", "blank_rows": 2}
+      },
+      "expected": {
+        "source": "header",
+        "range": "A4:G8",
+        "row_count": 4,
+        "source_columns": [7, 1, 4],
+        "cells": {
+          "G5": 1250.0,
+          "A5": "C-001",
+          "G7": null,
+          "G8": 2190.0
+        }
+      }
+    },
+    {
+      "id": "structured-alias-and-optional-fields",
+      "workbook": "../../examples/workbooks/scattered_headers.xlsx",
+      "operation": "query",
+      "query": {
+        "required_headers": ["account number", "amount"],
+        "optional_headers": ["invoice date", "owner", "purchase order"],
+        "aliases": {"account number": ["customer id", "client no"]},
+        "sheet": "Scattered Orders",
+        "within": "A4:G20",
+        "near": "A4"
+      },
+      "expected": {
+        "source": "header",
+        "range": "A4:G8",
+        "row_count": 4,
+        "source_columns": [1, 7, 4, 5],
+        "requested_headers": ["account number", "amount", "invoice date", "owner"],
+        "cells": {
+          "A6": "C-002",
+          "G6": 840.0,
+          "E8": "Chloe"
+        }
+      }
+    },
+    {
+      "id": "rectangular-defined-name",
+      "workbook": "../../examples/workbooks/named_and_headerless.xlsx",
+      "operation": "named_range",
+      "name": "InventoryData",
+      "expected": {
+        "source": "named_range",
+        "range": "B4:E8",
+        "row_count": 4,
+        "source_columns": [2, 3, 4, 5],
+        "cells": {
+          "B5": "SKU-100",
+          "D8": 7,
+          "E8": 88.0
+        }
+      }
+    },
+    {
+      "id": "headerless-explicit-range",
+      "workbook": "../../examples/workbooks/named_and_headerless.xlsx",
+      "operation": "range",
+      "sheet": "Raw Import",
+      "range": "C5:F8",
+      "header": null,
+      "expected": {
+        "source": "explicit_range",
+        "range": "C5:F8",
+        "row_count": 4,
+        "source_columns": [3, 4, 5, 6],
+        "requested_headers": [null, null, null, null],
+        "cells": {
+          "C5": "R-001",
+          "C8": "R-004",
+          "F8": 3.75
+        }
+      }
+    }
+  ]
+}

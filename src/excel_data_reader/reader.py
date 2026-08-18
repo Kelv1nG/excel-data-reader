@@ -22,12 +22,16 @@ from excel_data_reader.diagnostics import (
 from excel_data_reader.model import (
     BodyPolicy,
     BodyPolicyMode,
+    CandidateReason,
     CellData,
     ColumnInfo,
     Confidence,
     Coordinate,
     DataRow,
+    DiscoveryCandidate,
+    DiscoveryReport,
     FormulaValue,
+    HeaderEvidence,
     MatchSet,
     MatchSource,
     NamedRangeInfo,
@@ -36,6 +40,7 @@ from excel_data_reader.model import (
     Rectangle,
     SheetData,
     SheetInfo,
+    SheetScan,
     TableData,
     TableMatch,
     TableQuery,
@@ -51,6 +56,29 @@ class _HeaderField:
     normalized: str
     accepted: frozenset[str]
     required: bool
+
+
+@dataclass
+class _CandidateDraft:
+    sheet: str
+    source: MatchSource
+    header_row: int | None
+    bounds: Rectangle | None
+    evidence: tuple[HeaderEvidence, ...]
+    produced_matches: int
+    reasons: list[CandidateReason]
+    name: str | None = None
+
+
+@dataclass
+class _DiscoveryTrace:
+    scans: list[SheetScan]
+    candidates: list[_CandidateDraft]
+    truncated_sheets: set[str]
+
+    @classmethod
+    def create(cls) -> _DiscoveryTrace:
+        return cls([], [], set())
 
 
 class ExcelReader:
@@ -351,6 +379,24 @@ class ExcelReader:
     def query_tables(self, query: TableQuery) -> MatchSet:
         """Find tables satisfying a reusable structured query."""
 
+        return self._query_tables(query)
+
+    def explain(self, query: TableQuery) -> DiscoveryReport:
+        """Run a query and report how every interesting candidate was handled."""
+
+        trace = _DiscoveryTrace.create()
+        result = self._query_tables(query, trace=trace)
+        near = self._coerce_query_coordinate(query.near, sheet=query.sheet)
+        return self._finalize_discovery_report(query, result, trace, near)
+
+    def _query_tables(
+        self,
+        query: TableQuery,
+        *,
+        trace: _DiscoveryTrace | None = None,
+    ) -> MatchSet:
+        """Shared discovery implementation with optional trace collection."""
+
         self._require_open()
         fields = self._compile_table_query(query)
         within = self._coerce_query_rectangle(query.within, sheet=query.sheet)
@@ -384,12 +430,45 @@ class ExcelReader:
         for worksheet in worksheets:
             for table in worksheet.tables.values():
                 native = self._table_match(worksheet, table)
+                evidence = self._column_evidence(fields, native.columns)
+                reasons: list[CandidateReason] = []
                 if within is not None and not within.contains_rectangle(native.bounds):
+                    reasons.append(CandidateReason.OUTSIDE_WITHIN)
+                    self._record_trace_candidate(
+                        trace,
+                        _CandidateDraft(
+                            sheet=worksheet.title,
+                            source=MatchSource.NATIVE_TABLE,
+                            header_row=native.header_row,
+                            bounds=native.bounds,
+                            evidence=evidence,
+                            produced_matches=0,
+                            reasons=reasons,
+                            name=native.name,
+                        ),
+                    )
                     continue
                 projected = self._project_match(
                     native,
                     fields,
                     allow_non_adjacent_columns=query.allow_non_adjacent_columns,
+                )
+                if self._missing_required_evidence(evidence):
+                    reasons.append(CandidateReason.MISSING_REQUIRED_HEADERS)
+                elif not projected:
+                    reasons.append(CandidateReason.NON_ADJACENT_COLUMNS)
+                self._record_trace_candidate(
+                    trace,
+                    _CandidateDraft(
+                        sheet=worksheet.title,
+                        source=MatchSource.NATIVE_TABLE,
+                        header_row=native.header_row,
+                        bounds=native.bounds,
+                        evidence=evidence,
+                        produced_matches=len(projected),
+                        reasons=reasons,
+                        name=native.name,
+                    ),
                 )
                 for match in projected:
                     matches.append(match)
@@ -398,19 +477,34 @@ class ExcelReader:
         for worksheet in worksheets:
             scan_bounds = self._query_scan_bounds(worksheet, within)
             if scan_bounds is None:
+                if trace is not None:
+                    trace.scans.append(SheetScan(worksheet.title, None, 0, True))
                 continue
             try:
                 self._enforce_scan_limit(worksheet, bounds=scan_bounds)
             except ExcelDataReaderError as error:
                 diagnostics.extend(error.diagnostics)
+                if trace is not None:
+                    trace.scans.append(
+                        SheetScan(
+                            worksheet.title,
+                            scan_bounds,
+                            scan_bounds.area,
+                            False,
+                            error.diagnostics,
+                        )
+                    )
                 continue
             stop_sheet = False
+            last_scanned_row = scan_bounds.top - 1
             for row in worksheet.iter_rows(
                 min_row=scan_bounds.top,
                 max_row=scan_bounds.bottom,
                 min_col=scan_bounds.left,
                 max_col=scan_bounds.right,
             ):
+                header_row = row[0].row
+                last_scanned_row = header_row
                 positions: list[list[tuple[int, Any]]] = [[] for _ in fields]
                 for cell in row:
                     if cell.value is None:
@@ -419,9 +513,24 @@ class ExcelReader:
                     for index, field in enumerate(fields):
                         if canonical in field.accepted:
                             positions[index].append((cell.column, cell.value))
-                if any(
-                    field.required and not positions[index] for index, field in enumerate(fields)
-                ):
+                if not any(positions):
+                    continue
+
+                evidence = self._position_evidence(fields, positions, header_row)
+                evidence_bounds = self._evidence_bounds(evidence, header_row)
+                if self._missing_required_evidence(evidence):
+                    self._record_trace_candidate(
+                        trace,
+                        _CandidateDraft(
+                            sheet=worksheet.title,
+                            source=MatchSource.HEADER,
+                            header_row=header_row,
+                            bounds=evidence_bounds,
+                            evidence=evidence,
+                            produced_matches=0,
+                            reasons=[CandidateReason.MISSING_REQUIRED_HEADERS],
+                        ),
+                    )
                     continue
 
                 active = tuple(
@@ -442,6 +551,11 @@ class ExcelReader:
                     diagnostics.append(warning)
                     match_diagnostics = (warning,)
 
+                produced_matches = 0
+                rejected_non_adjacent = False
+                rejected_explicit_bottom = False
+                shadowed_by_native = False
+                candidate_bottom = header_row
                 for selected in product(*(found for _, found in active)):
                     selected_columns = tuple(item[0] for item in selected)
                     if len(set(selected_columns)) != len(selected_columns):
@@ -449,8 +563,8 @@ class ExcelReader:
                     if not query.allow_non_adjacent_columns and not self._columns_are_adjacent(
                         selected_columns
                     ):
+                        rejected_non_adjacent = True
                         continue
-                    header_row = row[0].row
                     columns = tuple(
                         ColumnInfo(
                             name=self._column_name(raw, index),
@@ -468,6 +582,7 @@ class ExcelReader:
                         and query.body.bottom_row is not None
                         and query.body.bottom_row < header_row
                     ):
+                        rejected_explicit_bottom = True
                         continue
                     bottom = self._infer_body_bottom(
                         worksheet,
@@ -476,6 +591,8 @@ class ExcelReader:
                         policy=query.body,
                         max_row=scan_bounds.bottom,
                     )
+                    candidate_bottom = max(candidate_bottom, bottom)
+                    produced_matches += 1
                     match = TableMatch(
                         sheet=worksheet.title,
                         bounds=Rectangle(
@@ -493,6 +610,7 @@ class ExcelReader:
                         diagnostics=match_diagnostics,
                     )
                     if self._header_signature(match) in structural_signatures:
+                        shadowed_by_native = True
                         continue
                     matches.append(match)
                     if len(matches) >= self.max_candidates:
@@ -505,8 +623,75 @@ class ExcelReader:
                         )
                         stop_sheet = True
                         break
+
+                reasons: list[CandidateReason] = []
+                if produced_matches == 0:
+                    if rejected_non_adjacent:
+                        reasons.append(CandidateReason.NON_ADJACENT_COLUMNS)
+                    if rejected_explicit_bottom:
+                        reasons.append(CandidateReason.EXPLICIT_BOTTOM_BEFORE_HEADER)
+                elif shadowed_by_native and not any(
+                    match.source is MatchSource.HEADER
+                    and match.sheet == worksheet.title
+                    and match.header_row == header_row
+                    for match in matches
+                ):
+                    reasons.append(CandidateReason.SHADOWED_BY_NATIVE_TABLE)
+                self._record_trace_candidate(
+                    trace,
+                    _CandidateDraft(
+                        sheet=worksheet.title,
+                        source=MatchSource.HEADER,
+                        header_row=header_row,
+                        bounds=(
+                            None
+                            if evidence_bounds is None
+                            else Rectangle(
+                                evidence_bounds.top,
+                                evidence_bounds.left,
+                                candidate_bottom,
+                                evidence_bounds.right,
+                            )
+                        ),
+                        evidence=evidence,
+                        produced_matches=produced_matches,
+                        reasons=reasons,
+                    ),
+                )
                 if stop_sheet:
                     break
+
+            if trace is not None:
+                completed = not stop_sheet and worksheet.title not in trace.truncated_sheets
+                scanned_bounds = (
+                    scan_bounds
+                    if last_scanned_row >= scan_bounds.bottom
+                    else Rectangle(
+                        scan_bounds.top,
+                        scan_bounds.left,
+                        max(scan_bounds.top, last_scanned_row),
+                        scan_bounds.right,
+                    )
+                )
+                scan_diagnostics: tuple[Diagnostic, ...] = ()
+                if worksheet.title in trace.truncated_sheets:
+                    scan_diagnostics = (
+                        Diagnostic(
+                            DiagnosticCode.SCAN_LIMIT_EXCEEDED,
+                            f"explanation candidate limit of {self.max_candidates} was reached",
+                            severity=Severity.WARNING,
+                            sheet=worksheet.title,
+                        ),
+                    )
+                trace.scans.append(
+                    SheetScan(
+                        worksheet.title,
+                        scanned_bounds,
+                        scanned_bounds.area,
+                        completed,
+                        scan_diagnostics,
+                    )
+                )
 
         matches = self._deduplicate_matches(matches)
         if near is not None and matches:
@@ -779,6 +964,124 @@ class ExcelReader:
             projected.append(replace(match, columns=columns, diagnostics=diagnostics))
         return tuple(projected)
 
+    @staticmethod
+    def _column_evidence(
+        fields: tuple[_HeaderField, ...],
+        columns: tuple[ColumnInfo, ...],
+    ) -> tuple[HeaderEvidence, ...]:
+        evidence: list[HeaderEvidence] = []
+        for field in fields:
+            matching = tuple(
+                column for column in columns if normalize_header(column.name) in field.accepted
+            )
+            evidence.append(
+                HeaderEvidence(
+                    requested_header=field.requested,
+                    required=field.required,
+                    coordinates=tuple(
+                        column.header_coordinate
+                        for column in matching
+                        if column.header_coordinate is not None
+                    ),
+                    raw_headers=tuple(str(column.raw_header or column.name) for column in matching),
+                )
+            )
+        return tuple(evidence)
+
+    @staticmethod
+    def _position_evidence(
+        fields: tuple[_HeaderField, ...],
+        positions: list[list[tuple[int, Any]]],
+        header_row: int,
+    ) -> tuple[HeaderEvidence, ...]:
+        return tuple(
+            HeaderEvidence(
+                requested_header=field.requested,
+                required=field.required,
+                coordinates=tuple(Coordinate(header_row, column) for column, _ in positions[index]),
+                raw_headers=tuple(str(raw) for _, raw in positions[index]),
+            )
+            for index, field in enumerate(fields)
+        )
+
+    @staticmethod
+    def _missing_required_evidence(evidence: tuple[HeaderEvidence, ...]) -> bool:
+        return any(item.required and not item.matched for item in evidence)
+
+    @staticmethod
+    def _evidence_bounds(
+        evidence: tuple[HeaderEvidence, ...],
+        header_row: int,
+    ) -> Rectangle | None:
+        columns = [coordinate.column for item in evidence for coordinate in item.coordinates]
+        if not columns:
+            return None
+        return Rectangle(header_row, min(columns), header_row, max(columns))
+
+    def _record_trace_candidate(
+        self,
+        trace: _DiscoveryTrace | None,
+        candidate: _CandidateDraft,
+    ) -> None:
+        if trace is None:
+            return
+        if len(trace.candidates) >= self.max_candidates:
+            trace.truncated_sheets.add(candidate.sheet)
+            return
+        trace.candidates.append(candidate)
+
+    def _finalize_discovery_report(
+        self,
+        query: TableQuery,
+        result: MatchSet,
+        trace: _DiscoveryTrace,
+        near: Coordinate | None,
+    ) -> DiscoveryReport:
+        candidates: list[DiscoveryCandidate] = []
+        for draft in trace.candidates:
+            selected = any(
+                match.sheet == draft.sheet
+                and match.source is draft.source
+                and (
+                    (draft.source is MatchSource.NATIVE_TABLE and match.name == draft.name)
+                    or (draft.source is MatchSource.HEADER and match.header_row == draft.header_row)
+                )
+                for match in result.matches
+            )
+            reasons = list(draft.reasons)
+            if draft.produced_matches and not selected and not reasons:
+                if near is not None:
+                    reasons.append(CandidateReason.FARTHER_FROM_NEAR)
+                elif any(
+                    match.source is MatchSource.NATIVE_TABLE
+                    and match.sheet == draft.sheet
+                    and match.header_row == draft.header_row
+                    for match in result.matches
+                ):
+                    reasons.append(CandidateReason.SHADOWED_BY_NATIVE_TABLE)
+                else:
+                    reasons.append(CandidateReason.CANDIDATE_LIMIT)
+            distance = (
+                None
+                if near is None or draft.bounds is None
+                else self._distance_to_rectangle(near, draft.bounds)
+            )
+            candidates.append(
+                DiscoveryCandidate(
+                    sheet=draft.sheet,
+                    source=draft.source,
+                    header_row=draft.header_row,
+                    bounds=draft.bounds,
+                    evidence=draft.evidence,
+                    produced_matches=draft.produced_matches,
+                    selected=selected,
+                    reasons=tuple(dict.fromkeys(reasons)),
+                    name=draft.name,
+                    distance_from_near=distance,
+                )
+            )
+        return DiscoveryReport(query, result, tuple(trace.scans), tuple(candidates))
+
     def _infer_body_bottom(
         self,
         worksheet: Worksheet,
@@ -1043,15 +1346,19 @@ class ExcelReader:
 
     @staticmethod
     def _distance_to_match(coordinate: Coordinate, match: TableMatch) -> int:
+        return ExcelReader._distance_to_rectangle(coordinate, match.bounds)
+
+    @staticmethod
+    def _distance_to_rectangle(coordinate: Coordinate, bounds: Rectangle) -> int:
         row_distance = max(
-            match.bounds.top - coordinate.row,
+            bounds.top - coordinate.row,
             0,
-            coordinate.row - match.bounds.bottom,
+            coordinate.row - bounds.bottom,
         )
         column_distance = max(
-            match.bounds.left - coordinate.column,
+            bounds.left - coordinate.column,
             0,
-            coordinate.column - match.bounds.right,
+            coordinate.column - bounds.right,
         )
         return row_distance + column_distance
 

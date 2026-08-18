@@ -12,6 +12,7 @@ uv run python examples/01_native_table.py
 uv run python examples/02_scattered_headers.py
 uv run python examples/03_named_and_headerless.py
 uv run python examples/04_table_query.py
+uv run python examples/05_explain_query.py
 ```
 
 Rebuild all workbooks:
@@ -89,3 +90,11 @@ The alias maps the workbook's `Customer ID` header to the logical `account numbe
 optional columns are returned after required columns; the absent `purchase order` field does not
 reject the match. `within` limits scanning, while `near` resolves repeated matching blocks by
 distance and leaves equal-distance ties ambiguous.
+
+## 5. Explainable discovery
+
+Workbook: `workbooks/scattered_headers.xlsx`
+
+`05_explain_query.py` calls `reader.explain(query)` and prints the scan window, number of cells
+considered, observed header coordinates, selected candidate, and rejection reasons. The returned
+`DiscoveryReport` contains the same `MatchSet` that `query_tables()` would return.

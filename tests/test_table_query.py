@@ -8,6 +8,7 @@ from openpyxl.worksheet.table import Table
 
 from excel_data_reader import (
     BodyPolicy,
+    CandidateReason,
     DiagnosticCode,
     ExcelDataReaderError,
     ExcelReader,
@@ -322,3 +323,81 @@ def test_explicit_bottom_must_lie_inside_within(messy_workbook_path: Path) -> No
         reader.query_tables(query)
 
     assert captured.value.diagnostics[0].code is DiagnosticCode.INVALID_HEADER_QUERY
+
+
+def test_explain_reports_scan_evidence_and_selected_candidate(
+    messy_workbook_path: Path,
+) -> None:
+    query = TableQuery(
+        ("customer id", "amount"),
+        optional_headers=("invoice date",),
+        aliases={
+            "customer id": ("client no",),
+            "amount": ("gross value",),
+            "invoice date": ("invoice dt",),
+        },
+        sheet="Aliases",
+    )
+
+    with ExcelReader.open(messy_workbook_path) as reader:
+        report = reader.explain(query)
+
+    assert report.scans[0].bounds is not None
+    assert report.scans[0].bounds.a1 == "A1:F3"
+    assert report.scans[0].cells_considered == 18
+    assert report.candidates[0].selected is True
+    assert [item.requested_header for item in report.candidates[0].evidence] == [
+        "customer id",
+        "amount",
+        "invoice date",
+    ]
+
+
+def test_explain_marks_farther_candidates_after_near_disambiguation(
+    messy_workbook_path: Path,
+) -> None:
+    query = TableQuery(("id", "amount"), sheet="Repeated", near="A12")
+
+    with ExcelReader.open(messy_workbook_path) as reader:
+        report = reader.explain(query)
+
+    candidates = {candidate.header_row: candidate for candidate in report.candidates}
+    assert candidates[3].selected is False
+    assert candidates[3].reasons == (CandidateReason.FARTHER_FROM_NEAR,)
+    assert candidates[12].selected is True
+    assert candidates[12].distance_from_near == 1
+
+
+def test_explain_records_native_table_rejected_by_within(
+    messy_workbook_path: Path,
+) -> None:
+    query = TableQuery(("id", "amount"), sheet="Native", within="A1:B5")
+
+    with ExcelReader.open(messy_workbook_path) as reader:
+        report = reader.explain(query)
+
+    native = next(
+        candidate for candidate in report.candidates if candidate.source is MatchSource.NATIVE_TABLE
+    )
+    inferred = next(
+        candidate for candidate in report.candidates if candidate.source is MatchSource.HEADER
+    )
+    assert native.reasons == (CandidateReason.OUTSIDE_WITHIN,)
+    assert inferred.selected is True
+
+
+def test_explain_reports_partial_headers_and_scan_limit(messy_workbook_path: Path) -> None:
+    missing_query = TableQuery(("id", "missing"), sheet="Repeated")
+    limited_query = TableQuery(("id", "amount"), sheet="Huge")
+
+    with ExcelReader.open(messy_workbook_path) as reader:
+        missing = reader.explain(missing_query)
+    with ExcelReader.open(messy_workbook_path, max_scan_cells=10) as reader:
+        limited = reader.explain(limited_query)
+
+    assert all(
+        candidate.reasons == (CandidateReason.MISSING_REQUIRED_HEADERS,)
+        for candidate in missing.candidates
+    )
+    assert limited.scans[0].completed is False
+    assert limited.scans[0].diagnostics[0].code is DiagnosticCode.SCAN_LIMIT_EXCEEDED

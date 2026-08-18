@@ -1,12 +1,15 @@
 [project]
 name = "excel-data-reader"
-version = "0.2.0"
+version = "0.3.0"
 description = "Deterministic discovery and extraction of tabular data from XLSX workbooks"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "openpyxl>=3.1.5,<4",
 ]
+
+[project.scripts]
+excel-data-reader = "excel_data_reader.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -20,7 +23,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-ra --strict-config --strict-markers"
+addopts = "-ra --strict-config --strict-markers --basetemp=.pytest-tmp"
 testpaths = ["tests"]
 pythonpath = ["."]
 

@@ -40,6 +40,16 @@ class BodyPolicyMode(StrEnum):
     EXPLICIT = "explicit"
 
 
+class CandidateReason(StrEnum):
+    OUTSIDE_WITHIN = "outside_within"
+    MISSING_REQUIRED_HEADERS = "missing_required_headers"
+    NON_ADJACENT_COLUMNS = "non_adjacent_columns"
+    EXPLICIT_BOTTOM_BEFORE_HEADER = "explicit_bottom_before_header"
+    SHADOWED_BY_NATIVE_TABLE = "shadowed_by_native_table"
+    FARTHER_FROM_NEAR = "farther_from_near"
+    CANDIDATE_LIMIT = "candidate_limit"
+
+
 @dataclass(frozen=True)
 class BodyPolicy:
     """Choose how a header-discovered table body ends.
@@ -172,6 +182,41 @@ class Rectangle:
 
 
 @dataclass(frozen=True)
+class HeaderEvidence:
+    requested_header: str
+    required: bool
+    coordinates: tuple[Coordinate, ...]
+    raw_headers: tuple[str, ...]
+
+    @property
+    def matched(self) -> bool:
+        return bool(self.raw_headers)
+
+
+@dataclass(frozen=True)
+class SheetScan:
+    sheet: str
+    bounds: Rectangle | None
+    cells_considered: int
+    completed: bool
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+
+@dataclass(frozen=True)
+class DiscoveryCandidate:
+    sheet: str
+    source: MatchSource
+    header_row: int | None
+    bounds: Rectangle | None
+    evidence: tuple[HeaderEvidence, ...]
+    produced_matches: int
+    selected: bool
+    reasons: tuple[CandidateReason, ...] = ()
+    name: str | None = None
+    distance_from_near: int | None = None
+
+
+@dataclass(frozen=True)
 class RangeReference:
     sheet: str
     bounds: Rectangle
@@ -256,6 +301,22 @@ class MatchSet:
                 f"query matched {len(self.matches)} tables: {locations}",
             )
         )
+
+
+@dataclass(frozen=True)
+class DiscoveryReport:
+    query: TableQuery
+    result: MatchSet
+    scans: tuple[SheetScan, ...]
+    candidates: tuple[DiscoveryCandidate, ...]
+
+    @property
+    def selected_matches(self) -> tuple[TableMatch, ...]:
+        return self.result.matches
+
+    @property
+    def diagnostics(self) -> tuple[Diagnostic, ...]:
+        return self.result.diagnostics
 
 
 @dataclass(frozen=True)

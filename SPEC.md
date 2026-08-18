@@ -44,6 +44,22 @@ when its full authored bounds lie inside that rectangle. Restricting the scan al
 resource-limit calculation. `near` selects matches with the minimum Manhattan distance from one
 A1 cell to each match rectangle. Equal-distance matches remain ambiguous.
 
+## Discovery reports
+
+`ExcelReader.explain(query)` executes the same discovery path as `query_tables(query)` and returns
+a `DiscoveryReport`. The report includes:
+
+- the exact worksheet rectangles considered and their cell counts;
+- whether each scan completed or was stopped by a resource limit;
+- native-table and interesting header-row candidates;
+- required and optional header evidence with physical coordinates and raw labels;
+- candidate match counts, proximity distances, selection state, and stable rejection reasons;
+- the final `MatchSet` and its diagnostics.
+
+An interesting header row contains at least one primary header or alias from the query. Candidate
+reporting is bounded by `max_candidates`; discovery itself retains its existing match limit and
+scan-cell limit. An incomplete report is marked on its corresponding `SheetScan`.
+
 ## Header-discovered body bounds
 
 The header row is followed downward through the selected columns. A row is blank for boundary
@@ -93,6 +109,13 @@ result without losing original coordinates.
 Whole-sheet scans check the apparent rectangular cell count before iteration. Work exceeding the
 configured `max_scan_cells` fails with `SCAN_LIMIT_EXCEEDED`. Callers can use explicit ranges or
 raise the limit deliberately.
+
+## Acceptance corpus
+
+Workbook acceptance cases are described by a versioned JSON manifest. Every case asserts the
+discovery source, physical range, logical projection, row count, and representative source cells.
+The checked-in corpus is a non-sensitive seed. Additional local manifests can point to private
+production workbooks without making those files part of the package or repository.
 
 ## Deferred behavior
 
