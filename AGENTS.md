@@ -1,0 +1,32 @@
+# Repository Instructions
+
+## Sources of truth
+
+- `SPEC.md` defines discovery and extraction semantics.
+- `README.md` defines the public usage examples.
+- `pyproject.toml` defines dependencies and tooling.
+- Update the specification before changing a public semantic contract.
+
+## Environment
+
+- Target CPython 3.12 only.
+- Use `uv` for environments, dependency management, locking, and command execution.
+- Keep `openpyxl` at the workbook-adapter boundary.
+
+## Architecture
+
+- Separate workbook inventory, candidate discovery, and data extraction.
+- Preserve source coordinates and typed values in all extracted results.
+- Do not infer a table solely from styles, blank cells, or worksheet dimensions.
+- Prefer explicit ranges and workbook-authored structure over heuristics.
+- Report ambiguity rather than silently selecting one candidate.
+- Keep header normalization exact and deterministic; fuzzy matching is not an MVP behavior.
+
+## Change discipline
+
+- Preserve unrelated user changes.
+- Add contract-level tests for every public behavior change.
+- Use stable diagnostic codes with worksheet and cell locations when available.
+- Run `uv run pytest`, `uv run ruff check src tests examples`,
+  `uv run ruff format --check src tests examples`,
+  and `uv run ty check` before handoff.

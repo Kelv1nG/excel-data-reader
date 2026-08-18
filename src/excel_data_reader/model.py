@@ -1,0 +1,281 @@
+"""Adapter-neutral immutable result models."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from types import MappingProxyType
+from typing import Any
+
+from excel_data_reader.diagnostics import (
+    Diagnostic,
+    DiagnosticCode,
+    ExcelDataReaderError,
+)
+from excel_data_reader.normalization import normalize_header
+
+
+class ValueMode(StrEnum):
+    FORMULA = "formula"
+    CACHED = "cached"
+    BOTH = "both"
+
+
+class MatchSource(StrEnum):
+    EXPLICIT_RANGE = "explicit_range"
+    NATIVE_TABLE = "native_table"
+    NAMED_RANGE = "named_range"
+    HEADER = "header"
+
+
+class Confidence(StrEnum):
+    STRUCTURAL = "structural"
+    HIGH = "high"
+
+
+def _column_letters(index: int) -> str:
+    letters = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return letters
+
+
+@dataclass(frozen=True, order=True)
+class Coordinate:
+    row: int
+    column: int
+
+    def __post_init__(self) -> None:
+        if self.row < 1 or self.column < 1:
+            raise ValueError("worksheet coordinates are one-based")
+
+    @property
+    def a1(self) -> str:
+        return f"{_column_letters(self.column)}{self.row}"
+
+
+@dataclass(frozen=True)
+class Rectangle:
+    top: int
+    left: int
+    bottom: int
+    right: int
+
+    def __post_init__(self) -> None:
+        if min(self.top, self.left) < 1 or self.bottom < self.top or self.right < self.left:
+            raise ValueError("invalid worksheet rectangle")
+
+    @property
+    def height(self) -> int:
+        return self.bottom - self.top + 1
+
+    @property
+    def width(self) -> int:
+        return self.right - self.left + 1
+
+    @property
+    def area(self) -> int:
+        return self.height * self.width
+
+    @property
+    def a1(self) -> str:
+        start = Coordinate(self.top, self.left).a1
+        end = Coordinate(self.bottom, self.right).a1
+        return start if start == end else f"{start}:{end}"
+
+    def contains(self, coordinate: Coordinate) -> bool:
+        return (
+            self.top <= coordinate.row <= self.bottom
+            and self.left <= coordinate.column <= self.right
+        )
+
+
+@dataclass(frozen=True)
+class RangeReference:
+    sheet: str
+    bounds: Rectangle
+
+    @property
+    def a1(self) -> str:
+        return f"'{self.sheet}'!{self.bounds.a1}"
+
+
+@dataclass(frozen=True)
+class FormulaValue:
+    formula: Any
+    cached: Any
+
+
+@dataclass(frozen=True)
+class CellData:
+    sheet: str
+    coordinate: Coordinate
+    value: Any
+    formula: Any | None
+    cached_value: Any
+    data_type: str
+    number_format: str
+    is_date: bool
+    hidden_row: bool
+    hidden_column: bool
+
+    @property
+    def address(self) -> str:
+        return self.coordinate.a1
+
+
+@dataclass(frozen=True)
+class ColumnInfo:
+    name: str
+    source_column: int
+    raw_header: Any | None = None
+    requested_header: str | None = None
+    header_coordinate: Coordinate | None = None
+
+
+@dataclass(frozen=True)
+class TableMatch:
+    sheet: str
+    bounds: Rectangle
+    columns: tuple[ColumnInfo, ...]
+    data_start_row: int
+    data_end_row: int
+    source: MatchSource
+    confidence: Confidence
+    header_row: int | None = None
+    name: str | None = None
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    @property
+    def range(self) -> str:
+        return self.bounds.a1
+
+    @property
+    def is_empty(self) -> bool:
+        return self.data_end_row < self.data_start_row
+
+
+@dataclass(frozen=True)
+class MatchSet:
+    matches: tuple[TableMatch, ...]
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    def require_one(self) -> TableMatch:
+        if len(self.matches) == 1:
+            return self.matches[0]
+        if not self.matches:
+            diagnostics = self.diagnostics or (
+                Diagnostic(DiagnosticCode.TABLE_NOT_FOUND, "no table matched the query"),
+            )
+            raise ExcelDataReaderError(diagnostics)
+        locations = ", ".join(f"{match.sheet}!{match.range}" for match in self.matches)
+        raise ExcelDataReaderError(
+            Diagnostic(
+                DiagnosticCode.AMBIGUOUS_TABLE,
+                f"query matched {len(self.matches)} tables: {locations}",
+            )
+        )
+
+
+@dataclass(frozen=True)
+class DataRow:
+    source_row: int
+    cells: tuple[CellData, ...]
+
+    @property
+    def values(self) -> tuple[Any, ...]:
+        return tuple(cell.value for cell in self.cells)
+
+
+@dataclass(frozen=True)
+class TableData:
+    match: TableMatch
+    rows: tuple[DataRow, ...]
+
+    @property
+    def columns(self) -> tuple[ColumnInfo, ...]:
+        return self.match.columns
+
+    @property
+    def values(self) -> tuple[tuple[Any, ...], ...]:
+        return tuple(row.values for row in self.rows)
+
+    def records(self) -> tuple[Mapping[str, Any], ...]:
+        names = tuple(column.name for column in self.columns)
+        normalized = tuple(normalize_header(name) for name in names)
+        duplicates = sorted({name for name in normalized if normalized.count(name) > 1})
+        if duplicates:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.DUPLICATE_HEADER,
+                    "normalized column names are not unique: " + ", ".join(duplicates),
+                    sheet=self.match.sheet,
+                    address=(
+                        Coordinate(self.match.header_row, self.match.bounds.left).a1
+                        if self.match.header_row is not None
+                        else None
+                    ),
+                )
+            )
+        return tuple(
+            MappingProxyType(dict(zip(names, row.values, strict=True))) for row in self.rows
+        )
+
+
+@dataclass(frozen=True)
+class SheetData:
+    name: str
+    cells: tuple[CellData, ...]
+    bounds: Rectangle | None
+
+    def to_matrix(self, *, fill: Any = None) -> tuple[tuple[Any, ...], ...]:
+        if self.bounds is None:
+            return ()
+        values = {(cell.coordinate.row, cell.coordinate.column): cell.value for cell in self.cells}
+        return tuple(
+            tuple(
+                values.get((row, column), fill)
+                for column in range(self.bounds.left, self.bounds.right + 1)
+            )
+            for row in range(self.bounds.top, self.bounds.bottom + 1)
+        )
+
+
+@dataclass(frozen=True)
+class NativeTableInfo:
+    name: str
+    sheet: str
+    bounds: Rectangle
+    column_names: tuple[str, ...]
+    header_row_count: int
+    totals_row_count: int
+
+
+@dataclass(frozen=True)
+class NamedRangeInfo:
+    name: str
+    scope: str | None
+    value: str
+    destinations: tuple[RangeReference, ...]
+    is_dynamic: bool
+    is_resolvable: bool
+
+
+@dataclass(frozen=True)
+class SheetInfo:
+    name: str
+    state: str
+    apparent_bounds: Rectangle | None
+    dimension: str
+    table_names: tuple[str, ...]
+    auto_filter_ref: str | None
+    merged_ranges: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WorkbookInventory:
+    sheets: tuple[SheetInfo, ...]
+    native_tables: tuple[NativeTableInfo, ...]
+    named_ranges: tuple[NamedRangeInfo, ...]
