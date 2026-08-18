@@ -37,9 +37,23 @@ from excel_data_reader.model import (
 from excel_data_reader.normalization import normalize_header
 from excel_data_reader.reader import ExcelReader
 from excel_data_reader.serialization import JSON_VALUE_SCHEMA_VERSION, to_json, to_jsonable
+from excel_data_reader.service import (
+    ANALYSIS_SCHEMA_VERSION,
+    AnalysisOperation,
+    AnalysisRequest,
+    AnalysisResponse,
+    AnalysisStatus,
+    ExtractedTable,
+    analyze_workbook,
+)
 
 __all__ = [
+    "ANALYSIS_SCHEMA_VERSION",
     "JSON_VALUE_SCHEMA_VERSION",
+    "AnalysisOperation",
+    "AnalysisRequest",
+    "AnalysisResponse",
+    "AnalysisStatus",
     "BodyPolicy",
     "BodyPolicyMode",
     "CandidateReason",
@@ -54,6 +68,7 @@ __all__ = [
     "DiscoveryReport",
     "ExcelDataReaderError",
     "ExcelReader",
+    "ExtractedTable",
     "FormulaValue",
     "HeaderEvidence",
     "MatchSet",
@@ -71,6 +86,7 @@ __all__ = [
     "TableQuery",
     "ValueMode",
     "WorkbookInventory",
+    "analyze_workbook",
     "normalize_header",
     "to_json",
     "to_jsonable",
