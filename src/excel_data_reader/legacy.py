@@ -108,6 +108,8 @@ def _copy_sheet(
     *,
     checkpoint: Callable[[], None] | None,
 ) -> None:
+    """Copy supported BIFF worksheet values and structural metadata."""
+
     for row_index in range(source_sheet.nrows):
         _checkpoint(checkpoint)
         for column_index in range(source_sheet.row_len(row_index)):
@@ -144,6 +146,8 @@ def _copy_defined_names(
     *,
     checkpoint: Callable[[], None] | None,
 ) -> None:
+    """Copy resolvable rectangular BIFF names into OpenPyXL definitions."""
+
     for source_name in source.name_obj_list:
         _checkpoint(checkpoint)
         if source_name.macro or source_name.scope < -1:
@@ -167,6 +171,8 @@ def _copy_defined_names(
 
 
 def _cell_value(source: xlrd.book.Book, cell: xlrd.sheet.Cell):
+    """Convert an xlrd cell into the corresponding public Python scalar."""
+
     if cell.ctype == xlrd.XL_CELL_DATE:
         return xlrd.xldate_as_datetime(cell.value, source.datemode)
     if cell.ctype == xlrd.XL_CELL_BOOLEAN:
@@ -177,6 +183,8 @@ def _cell_value(source: xlrd.book.Book, cell: xlrd.sheet.Cell):
 
 
 def _number_format(source: xlrd.book.Book, xf_index: int) -> str | None:
+    """Return an XLS number format string when the XF record resolves."""
+
     try:
         format_key = source.xf_list[xf_index].format_key
         return str(source.format_map[format_key].format_str)
@@ -185,15 +193,21 @@ def _number_format(source: xlrd.book.Book, xf_index: int) -> str | None:
 
 
 def _sheet_state(visibility: int) -> str:
+    """Map BIFF visibility flags to OpenPyXL worksheet state values."""
+
     return {0: "visible", 1: "hidden", 2: "veryHidden"}.get(visibility, "visible")
 
 
 def _legacy_error_message(code: DiagnosticCode) -> str:
+    """Return a path-safe public message for a legacy parsing failure."""
+
     if code is DiagnosticCode.ENCRYPTED_WORKBOOK:
         return "password-protected legacy XLS workbooks are not supported"
     return "compound document is not a readable Excel 97-2003 workbook"
 
 
 def _checkpoint(callback: Callable[[], None] | None) -> None:
+    """Invoke a cooperative execution checkpoint when one is configured."""
+
     if callback is not None:
         callback()

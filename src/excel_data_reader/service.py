@@ -246,6 +246,8 @@ def _analyze_path(
     policy: WorkbookPolicy,
     budget: _AnalysisBudget,
 ) -> AnalysisResponse:
+    """Run validated path analysis and convert expected failures into responses."""
+
     inspection: WorkbookInspection | None = None
     try:
         budget.checkpoint()
@@ -373,6 +375,8 @@ def _response(
     diagnostics: tuple[Diagnostic, ...] = (),
     inspection: WorkbookInspection | None = None,
 ) -> AnalysisResponse:
+    """Construct a response with all schema and request metadata populated."""
+
     return AnalysisResponse(
         schema_version=ANALYSIS_SCHEMA_VERSION,
         value_schema_version=JSON_VALUE_SCHEMA_VERSION,
@@ -395,6 +399,8 @@ def _write_upload(
     max_file_size: int,
     checkpoint: Callable[[], None],
 ) -> None:
+    """Copy bytes or a binary stream to disk without exceeding the file limit."""
+
     total = 0
     with path.open("wb") as destination:
         if isinstance(data, (bytes, bytearray, memoryview)):
@@ -419,6 +425,8 @@ def _write_upload(
 
 
 def _reject_large_upload(actual_size: int, maximum_size: int) -> None:
+    """Raise the stable rejection used when upload copying crosses its limit."""
+
     raise WorkbookRejectedError(
         Diagnostic(
             Code.WORKBOOK_TOO_LARGE,
@@ -428,6 +436,8 @@ def _reject_large_upload(actual_size: int, maximum_size: int) -> None:
 
 
 def _source_name(filename: str) -> str:
+    """Return a control-free bounded basename safe for response metadata."""
+
     normalized = filename.replace("\\", "/")
     basename = normalized.rsplit("/", maxsplit=1)[-1].strip()
     printable = "".join(

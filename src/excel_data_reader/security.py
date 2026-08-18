@@ -49,6 +49,8 @@ class WorkbookPolicy:
     allow_external_links: bool = False
 
     def __post_init__(self) -> None:
+        """Normalize extensions and validate every configured resource limit."""
+
         extensions = frozenset(
             item.casefold() if item.startswith(".") else f".{item.casefold()}"
             for item in self.allowed_extensions
@@ -211,6 +213,8 @@ def _validate_members(
     *,
     checkpoint: Callable[[], None] | None,
 ) -> None:
+    """Reject unsafe, encrypted, oversized, or unusually compressed ZIP members."""
+
     if len(members) > policy.max_archive_entries:
         _reject(
             DiagnosticCode.ARCHIVE_LIMIT_EXCEEDED,
@@ -272,6 +276,8 @@ def _validate_members(
 
 
 def _compression_ratio(member: ZipInfo) -> float:
+    """Return an archive member's expanded-to-compressed size ratio."""
+
     if member.file_size == 0:
         return 1.0
     if member.compress_size == 0:
@@ -280,6 +286,8 @@ def _compression_ratio(member: ZipInfo) -> float:
 
 
 def _sha256(path: Path, *, checkpoint: Callable[[], None] | None) -> str:
+    """Hash a workbook incrementally while honoring cooperative checkpoints."""
+
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -289,9 +297,13 @@ def _sha256(path: Path, *, checkpoint: Callable[[], None] | None) -> str:
 
 
 def _checkpoint(callback: Callable[[], None] | None) -> None:
+    """Invoke a cooperative execution checkpoint when one is configured."""
+
     if callback is not None:
         callback()
 
 
 def _reject(code: DiagnosticCode, message: str) -> None:
+    """Raise a workbook-policy rejection with one stable diagnostic."""
+
     raise WorkbookRejectedError(Diagnostic(code, message))

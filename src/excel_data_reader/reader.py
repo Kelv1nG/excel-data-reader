@@ -824,16 +824,22 @@ class ExcelReader:
         return SheetData(worksheet.title, tuple(cells), bounds)
 
     def _require_open(self) -> None:
+        """Raise a stable diagnostic when an operation uses a closed reader."""
+
         if self._closed:
             raise ExcelDataReaderError(
                 Diagnostic(DiagnosticCode.READER_CLOSED, "the workbook reader is closed")
             )
 
     def _checkpoint(self) -> None:
+        """Invoke the configured cooperative execution checkpoint."""
+
         if self._checkpoint_callback is not None:
             self._checkpoint_callback()
 
     def _sheet(self, name: str) -> Worksheet:
+        """Return one worksheet or raise a sheet-not-found diagnostic."""
+
         self._require_open()
         if name not in self._workbook.sheetnames:
             raise ExcelDataReaderError(
@@ -846,6 +852,8 @@ class ExcelReader:
         return self._workbook[name]
 
     def _cached_sheet(self, name: str) -> Worksheet | None:
+        """Return the cached-value worksheet when that workbook was opened."""
+
         if self._cached_workbook is None:
             return None
         return self._cached_workbook[name]
@@ -859,6 +867,8 @@ class ExcelReader:
         hidden_rows: set[int],
         hidden_columns: set[int],
     ) -> CellData:
+        """Build coordinate-preserving cell data in the configured value mode."""
+
         formula_cell = worksheet.cell(row, column)
         cached_sheet = self._cached_sheet(worksheet.title)
         cached_cell = cached_sheet.cell(row, column) if cached_sheet is not None else None
@@ -904,6 +914,8 @@ class ExcelReader:
         source: MatchSource,
         name: str | None = None,
     ) -> TableMatch:
+        """Build a structural table match from an explicit worksheet rectangle."""
+
         if header is not None and (header < 0 or bounds.top + header > bounds.bottom):
             raise ExcelDataReaderError(
                 Diagnostic(
@@ -940,6 +952,8 @@ class ExcelReader:
         )
 
     def _table_match(self, worksheet: Worksheet, table: Table) -> TableMatch:
+        """Translate an authored OpenPyXL table into a public table match."""
+
         bounds = self._parse_rectangle(str(table.ref), sheet=worksheet.title)
         header_count = self._optional_int(table.headerRowCount)
         totals_count = self._optional_int(table.totalsRowCount)
@@ -983,6 +997,8 @@ class ExcelReader:
         *,
         allow_non_adjacent_columns: bool,
     ) -> tuple[TableMatch, ...]:
+        """Project a structural match onto every valid logical column selection."""
+
         positions: list[list[ColumnInfo]] = [[] for _ in fields]
         for column in match.columns:
             canonical = normalize_header(column.name)
@@ -1026,6 +1042,8 @@ class ExcelReader:
         fields: tuple[_HeaderField, ...],
         columns: tuple[ColumnInfo, ...],
     ) -> tuple[HeaderEvidence, ...]:
+        """Collect query evidence from the columns of a structural match."""
+
         evidence: list[HeaderEvidence] = []
         for field in fields:
             matching = tuple(
@@ -1051,6 +1069,8 @@ class ExcelReader:
         positions: list[list[tuple[int, Any]]],
         header_row: int,
     ) -> tuple[HeaderEvidence, ...]:
+        """Convert scanned header positions into coordinate-rich evidence."""
+
         return tuple(
             HeaderEvidence(
                 requested_header=field.requested,
@@ -1063,6 +1083,8 @@ class ExcelReader:
 
     @staticmethod
     def _missing_required_evidence(evidence: tuple[HeaderEvidence, ...]) -> bool:
+        """Return whether any required logical field lacks physical evidence."""
+
         return any(item.required and not item.matched for item in evidence)
 
     @staticmethod
@@ -1070,6 +1092,8 @@ class ExcelReader:
         evidence: tuple[HeaderEvidence, ...],
         header_row: int,
     ) -> Rectangle | None:
+        """Return the smallest header-row rectangle containing all evidence."""
+
         columns = [coordinate.column for item in evidence for coordinate in item.coordinates]
         if not columns:
             return None
@@ -1080,6 +1104,8 @@ class ExcelReader:
         trace: _DiscoveryTrace | None,
         candidate: _CandidateDraft,
     ) -> None:
+        """Append a candidate while enforcing the explanation-size limit."""
+
         if trace is None:
             return
         if len(trace.candidates) >= self.max_candidates:
@@ -1094,6 +1120,8 @@ class ExcelReader:
         trace: _DiscoveryTrace,
         near: Coordinate | None,
     ) -> DiscoveryReport:
+        """Resolve trace drafts into immutable selected and rejected candidates."""
+
         candidates: list[DiscoveryCandidate] = []
         for draft in trace.candidates:
             selected = any(
@@ -1148,6 +1176,8 @@ class ExcelReader:
         policy: BodyPolicy,
         max_row: int,
     ) -> int:
+        """Infer the final data row using the query's body-boundary policy."""
+
         if policy.mode is BodyPolicyMode.EXPLICIT:
             if policy.bottom_row is None:
                 raise AssertionError("validated explicit policy has no bottom row")
@@ -1169,6 +1199,8 @@ class ExcelReader:
         return last_nonblank
 
     def _compile_table_query(self, query: TableQuery) -> tuple[_HeaderField, ...]:
+        """Normalize fields and aliases while rejecting ambiguous query definitions."""
+
         required_headers = tuple(query.required_headers)
         optional_headers = tuple(query.optional_headers)
         declared = required_headers + optional_headers
@@ -1236,6 +1268,8 @@ class ExcelReader:
         )
 
     def _iter_named_range_info(self) -> Iterator[NamedRangeInfo]:
+        """Yield workbook- and worksheet-scoped defined-name metadata."""
+
         for name, definition in self._workbook.defined_names.items():
             self._checkpoint()
             yield self._named_range_info(name, definition, scope=None)
@@ -1252,6 +1286,8 @@ class ExcelReader:
         *,
         scope: str | None,
     ) -> NamedRangeInfo:
+        """Resolve one defined name into rectangular destinations when possible."""
+
         destinations: list[RangeReference] = []
         unresolved = False
         try:
@@ -1278,6 +1314,8 @@ class ExcelReader:
         )
 
     def _table_info(self, worksheet: Worksheet, table: Table) -> NativeTableInfo:
+        """Translate authored table metadata for workbook inventory."""
+
         bounds = self._parse_rectangle(str(table.ref), sheet=worksheet.title)
         totals_count = self._optional_int(table.totalsRowCount)
         if totals_count == 0 and table.totalsRowShown:
@@ -1293,25 +1331,35 @@ class ExcelReader:
 
     @staticmethod
     def _table_name(table: Table) -> str:
+        """Return the authored display name with a stable fallback."""
+
         return str(table.displayName or table.name)
 
     @staticmethod
     def _optional_int(value: Any) -> int:
+        """Coerce optional numeric workbook metadata to a concrete integer."""
+
         return 0 if value is None else int(value)
 
     @staticmethod
     def _column_name(raw: Any | None, position: int) -> str:
+        """Return an authored header or a stable synthetic column name."""
+
         if raw is None or not normalize_header(raw):
             return f"column_{position}"
         return str(raw)
 
     @staticmethod
     def _columns_are_adjacent(columns: tuple[int, ...]) -> bool:
+        """Return whether selected physical columns form one contiguous run."""
+
         ordered = sorted(columns)
         return ordered[-1] - ordered[0] + 1 == len(ordered)
 
     @staticmethod
     def _header_signature(match: TableMatch) -> tuple[str, int, tuple[int, ...]]:
+        """Return the structural identity used to compare discovery matches."""
+
         return (
             match.sheet,
             match.header_row or match.bounds.top,
@@ -1320,6 +1368,8 @@ class ExcelReader:
 
     @staticmethod
     def _deduplicate_matches(matches: list[TableMatch]) -> list[TableMatch]:
+        """Deduplicate matches while preferring authored native tables."""
+
         unique: dict[tuple[str, int, tuple[int, ...]], TableMatch] = {}
         for match in matches:
             signature = ExcelReader._header_signature(match)
@@ -1329,6 +1379,8 @@ class ExcelReader:
         return list(unique.values())
 
     def _parse_rectangle(self, value: str, *, sheet: str) -> Rectangle:
+        """Parse one finite A1 rectangle or raise an invalid-range diagnostic."""
+
         try:
             min_col, min_row, max_col, max_row = range_boundaries(value)
             if None in {min_col, min_row, max_col, max_row}:
@@ -1349,6 +1401,8 @@ class ExcelReader:
         *,
         sheet: str | None,
     ) -> Rectangle | None:
+        """Normalize an optional query range into a rectangle."""
+
         if value is None or isinstance(value, Rectangle):
             return value
         if not isinstance(value, str):
@@ -1367,6 +1421,8 @@ class ExcelReader:
         *,
         sheet: str | None,
     ) -> Coordinate | None:
+        """Normalize an optional query location into one coordinate."""
+
         if value is None or isinstance(value, Coordinate):
             return value
         if not isinstance(value, str):
@@ -1394,6 +1450,8 @@ class ExcelReader:
         worksheet: Worksheet,
         within: Rectangle | None,
     ) -> Rectangle | None:
+        """Intersect apparent worksheet bounds with an optional query window."""
+
         apparent = Rectangle(1, 1, int(worksheet.max_row), int(worksheet.max_column))
         if within is None:
             return apparent
@@ -1407,10 +1465,14 @@ class ExcelReader:
 
     @staticmethod
     def _distance_to_match(coordinate: Coordinate, match: TableMatch) -> int:
+        """Return Manhattan distance from a coordinate to a match rectangle."""
+
         return ExcelReader._distance_to_rectangle(coordinate, match.bounds)
 
     @staticmethod
     def _distance_to_rectangle(coordinate: Coordinate, bounds: Rectangle) -> int:
+        """Return Manhattan distance from a coordinate to inclusive bounds."""
+
         row_distance = max(
             bounds.top - coordinate.row,
             0,
@@ -1429,6 +1491,8 @@ class ExcelReader:
         *,
         bounds: Rectangle | None = None,
     ) -> None:
+        """Reject a worksheet scan whose rectangular cell count exceeds its limit."""
+
         scan_bounds = bounds or Rectangle(
             1,
             1,
@@ -1448,6 +1512,8 @@ class ExcelReader:
 
     @staticmethod
     def _apparent_bounds(worksheet: Worksheet) -> Rectangle | None:
+        """Return worksheet dimensions unless the sheet is effectively empty."""
+
         if (
             worksheet.max_row == 1
             and worksheet.max_column == 1
@@ -1460,12 +1526,16 @@ class ExcelReader:
 
     @staticmethod
     def _hidden_rows(worksheet: Worksheet) -> set[int]:
+        """Return one-based indexes of rows marked hidden."""
+
         return {
             int(index) for index, dimension in worksheet.row_dimensions.items() if dimension.hidden
         }
 
     @staticmethod
     def _hidden_columns(worksheet: Worksheet) -> set[int]:
+        """Expand hidden column dimensions into one-based physical indexes."""
+
         hidden: set[int] = set()
         for key, dimension in worksheet.column_dimensions.items():
             if not dimension.hidden:
