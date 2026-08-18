@@ -5,8 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
+
+from defusedxml.common import DefusedXmlException
+from openpyxl.utils.exceptions import InvalidFileException
 
 from excel_data_reader.diagnostics import Diagnostic, ExcelDataReaderError
+from excel_data_reader.diagnostics import DiagnosticCode as Code
 from excel_data_reader.model import (
     DataRow,
     DiscoveryReport,
@@ -16,6 +22,12 @@ from excel_data_reader.model import (
     WorkbookInventory,
 )
 from excel_data_reader.reader import ExcelReader
+from excel_data_reader.security import (
+    WorkbookInspection,
+    WorkbookPolicy,
+    WorkbookRejectedError,
+    inspect_workbook,
+)
 from excel_data_reader.serialization import JSON_VALUE_SCHEMA_VERSION, to_json
 
 ANALYSIS_SCHEMA_VERSION = "1.0"
@@ -106,6 +118,7 @@ class AnalysisResponse:
     discovery: DiscoveryReport | None = None
     tables: tuple[ExtractedTable, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
+    inspection: WorkbookInspection | None = None
 
     def to_json(self, *, indent: int | None = None) -> str:
         return to_json(self, indent=indent)
@@ -117,11 +130,14 @@ def analyze_workbook(
     *,
     max_scan_cells: int = 2_000_000,
     max_candidates: int = 100,
+    policy: WorkbookPolicy | None = None,
 ) -> AnalysisResponse:
     """Analyze a workbook through a stable, JSON-serializable service boundary."""
 
     workbook_path = Path(path)
+    inspection: WorkbookInspection | None = None
     try:
+        inspection = inspect_workbook(workbook_path, policy)
         with ExcelReader.open(
             workbook_path,
             value_mode=request.value_mode,
@@ -137,6 +153,7 @@ def analyze_workbook(
                     request,
                     AnalysisStatus.SUCCESS,
                     inventory=inventory,
+                    inspection=inspection,
                 )
 
             if request.query is None:
@@ -170,13 +187,36 @@ def analyze_workbook(
                 discovery=discovery,
                 tables=tables,
                 diagnostics=discovery.diagnostics,
+                inspection=inspection,
             )
+    except WorkbookRejectedError as error:
+        return _response(
+            workbook_path,
+            request,
+            AnalysisStatus.REJECTED,
+            diagnostics=error.diagnostics,
+            inspection=inspection,
+        )
+    except (BadZipFile, DefusedXmlException, InvalidFileException, OSError, ParseError) as error:
+        return _response(
+            workbook_path,
+            request,
+            AnalysisStatus.REJECTED,
+            diagnostics=(
+                Diagnostic(
+                    Code.INVALID_WORKBOOK_ARCHIVE,
+                    f"workbook content could not be parsed ({type(error).__name__})",
+                ),
+            ),
+            inspection=inspection,
+        )
     except ExcelDataReaderError as error:
         return _response(
             workbook_path,
             request,
             AnalysisStatus.ERROR,
             diagnostics=error.diagnostics,
+            inspection=inspection,
         )
 
 
@@ -189,6 +229,7 @@ def _response(
     discovery: DiscoveryReport | None = None,
     tables: tuple[ExtractedTable, ...] = (),
     diagnostics: tuple[Diagnostic, ...] = (),
+    inspection: WorkbookInspection | None = None,
 ) -> AnalysisResponse:
     return AnalysisResponse(
         schema_version=ANALYSIS_SCHEMA_VERSION,
@@ -201,4 +242,5 @@ def _response(
         discovery=discovery,
         tables=tables,
         diagnostics=diagnostics,
+        inspection=inspection,
     )

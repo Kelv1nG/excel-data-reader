@@ -36,6 +36,12 @@ from excel_data_reader.model import (
 )
 from excel_data_reader.normalization import normalize_header
 from excel_data_reader.reader import ExcelReader
+from excel_data_reader.security import (
+    WorkbookInspection,
+    WorkbookPolicy,
+    WorkbookRejectedError,
+    inspect_workbook,
+)
 from excel_data_reader.serialization import JSON_VALUE_SCHEMA_VERSION, to_json, to_jsonable
 from excel_data_reader.service import (
     ANALYSIS_SCHEMA_VERSION,
@@ -85,8 +91,12 @@ __all__ = [
     "TableMatch",
     "TableQuery",
     "ValueMode",
+    "WorkbookInspection",
     "WorkbookInventory",
+    "WorkbookPolicy",
+    "WorkbookRejectedError",
     "analyze_workbook",
+    "inspect_workbook",
     "normalize_header",
     "to_json",
     "to_jsonable",

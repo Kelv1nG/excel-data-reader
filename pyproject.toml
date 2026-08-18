@@ -5,6 +5,7 @@ description = "Deterministic discovery and extraction of tabular data from XLSX 
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "defusedxml>=0.7.1,<1",
     "openpyxl>=3.1.5,<4",
 ]
 
