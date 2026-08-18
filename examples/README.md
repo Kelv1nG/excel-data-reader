@@ -1,8 +1,11 @@
 # Examples
 
-These examples pair small Python programs with real `.xlsx` workbooks under `workbooks/`.
-The workbooks are checked in so each script runs immediately, and `build_workbooks.py` recreates
-all of them with OpenPyXL.
+These examples pair small Python programs with real `.xlsx` and `.xls` workbooks under
+`workbooks/`. The workbooks are checked in so each script runs immediately, and
+`build_workbooks.py` recreates them with OpenPyXL and xlwt.
+
+For a short decision guide covering native tables, header discovery, headerless ranges, sparse
+reads, uploads, and legacy `.xls`, see [`usage.md`](usage.md).
 
 From the repository root:
 
