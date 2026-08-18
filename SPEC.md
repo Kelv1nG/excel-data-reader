@@ -1,4 +1,4 @@
-# Excel Data Reader MVP Specification
+# Excel Data Reader Specification
 
 ## Purpose
 
@@ -28,12 +28,38 @@ and performs Unicode case folding. It does not use fuzzy similarity.
 Requested headers may appear in any physical order. Non-adjacent columns are allowed unless the
 caller disables them. The extracted logical column order follows the requested header order.
 
+## Structured table queries
+
+`TableQuery` separates required and optional logical fields. Every required field must match on
+one row. Optional fields are appended to the logical projection when present and do not prevent a
+match when absent.
+
+Aliases map a declared logical field to additional accepted header spellings. Primary names and
+aliases all use the same exact normalization. An alias cannot belong to multiple fields, and an
+alias key must refer to a declared required or optional field. These validation rules prevent one
+physical cell from satisfying multiple logical fields.
+
+`within` restricts header scanning to a finite A1 rectangle. A native Excel Table is eligible only
+when its full authored bounds lie inside that rectangle. Restricting the scan also restricts its
+resource-limit calculation. `near` selects matches with the minimum Manhattan distance from one
+A1 cell to each match rectangle. Equal-distance matches remain ambiguous.
+
 ## Header-discovered body bounds
 
 The header row is followed downward through the selected columns. A row is blank for boundary
 purposes only when all selected columns have no stored value. Discovery stops after the configured
 number of consecutive blank rows and excludes trailing blank rows. Internal blank rows remain in
 the extracted table.
+
+Header-inferred queries expose three explicit boundary policies:
+
+1. stop after a configured run of blank rows across the selected columns;
+2. continue through the last populated row in the selected columns;
+3. use a caller-supplied bottom row.
+
+Optional columns that are present participate in boundary detection. Native Excel Tables ignore
+these policies and retain their authored data boundaries. A caller-supplied bottom row must not
+fall outside `within` when that search constraint is present.
 
 Worksheet dimensions are scan bounds and resource-limit inputs, not evidence that the bounded
 rectangle is a table.
@@ -70,5 +96,5 @@ raise the limit deliberately.
 
 ## Deferred behavior
 
-The MVP does not implement fuzzy headers, automatic dense-region detection, multi-row headers,
-ordinal compression of unrelated columns, joins, or label/value form extraction.
+The library does not implement fuzzy headers, automatic dense-region detection, multi-row
+headers, ordinal compression of unrelated columns, joins, or label/value form extraction.

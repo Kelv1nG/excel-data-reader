@@ -11,6 +11,7 @@ uv sync --all-groups
 uv run python examples/01_native_table.py
 uv run python examples/02_scattered_headers.py
 uv run python examples/03_named_and_headerless.py
+uv run python examples/04_table_query.py
 ```
 
 Rebuild all workbooks:
@@ -66,3 +67,25 @@ raw = reader.read_range("Raw Import", "C5:F8", header=None)
 The named range supplies a deterministic rectangular boundary. The raw import has no headers, so
 the reader supplies `column_1` through `column_4` while preserving every source coordinate.
 
+## 4. Structured table query
+
+Workbook: `workbooks/scattered_headers.xlsx`
+
+`04_table_query.py` searches the same scattered worksheet using a reusable query:
+
+```python
+query = TableQuery(
+    required_headers=("account number", "amount"),
+    optional_headers=("invoice date", "owner", "purchase order"),
+    aliases={"account number": ("customer id", "client no")},
+    sheet="Scattered Orders",
+    within="A4:G20",
+    near="A4",
+    body=BodyPolicy.until_blank_rows(2),
+)
+```
+
+The alias maps the workbook's `Customer ID` header to the logical `account number` field. Present
+optional columns are returned after required columns; the absent `purchase order` field does not
+reject the match. `within` limits scanning, while `near` resolves repeated matching blocks by
+distance and leaves equal-distance ties ambiguous.

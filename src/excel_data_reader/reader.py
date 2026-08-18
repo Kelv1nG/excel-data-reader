@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,8 @@ from excel_data_reader.diagnostics import (
     Severity,
 )
 from excel_data_reader.model import (
+    BodyPolicy,
+    BodyPolicyMode,
     CellData,
     ColumnInfo,
     Confidence,
@@ -36,10 +38,19 @@ from excel_data_reader.model import (
     SheetInfo,
     TableData,
     TableMatch,
+    TableQuery,
     ValueMode,
     WorkbookInventory,
 )
 from excel_data_reader.normalization import normalize_header
+
+
+@dataclass(frozen=True)
+class _HeaderField:
+    requested: str
+    normalized: str
+    accepted: frozenset[str]
+    required: bool
 
 
 class ExcelReader:
@@ -291,25 +302,80 @@ class ExcelReader:
 
     def find_tables(
         self,
-        headers: Sequence[str],
+        headers: Sequence[str] | TableQuery,
         *,
         sheet: str | None = None,
-        allow_non_adjacent_columns: bool = True,
-        max_blank_rows: int = 2,
+        allow_non_adjacent_columns: bool | None = None,
+        max_blank_rows: int | None = None,
     ) -> MatchSet:
-        """Find tables containing every exact normalized header on one row."""
+        """Find tables from a header list or a structured :class:`TableQuery`.
+
+        The sequence form is the original convenience API. Passing a
+        ``TableQuery`` enables aliases, optional headers, scoped searches,
+        disambiguation, and explicit body-boundary policies.
+        """
 
         self._require_open()
-        requested, normalized = self._validate_header_query(headers)
-        if max_blank_rows < 1:
+        if isinstance(headers, TableQuery):
+            if (
+                sheet is not None
+                or allow_non_adjacent_columns is not None
+                or max_blank_rows is not None
+            ):
+                raise ExcelDataReaderError(
+                    Diagnostic(
+                        DiagnosticCode.INVALID_HEADER_QUERY,
+                        "legacy keyword options cannot be combined with a TableQuery",
+                    )
+                )
+            return self.query_tables(headers)
+
+        adjacent = True if allow_non_adjacent_columns is None else allow_non_adjacent_columns
+        blank_rows = 2 if max_blank_rows is None else max_blank_rows
+        try:
+            query = TableQuery(
+                required_headers=(headers,) if isinstance(headers, str) else tuple(headers),
+                sheet=sheet,
+                allow_non_adjacent_columns=adjacent,
+                body=BodyPolicy.until_blank_rows(blank_rows),
+            )
+        except (TypeError, ValueError) as error:
             raise ExcelDataReaderError(
                 Diagnostic(
                     DiagnosticCode.INVALID_HEADER_QUERY,
-                    "max_blank_rows must be at least one",
+                    str(error),
+                )
+            ) from error
+        return self.query_tables(query)
+
+    def query_tables(self, query: TableQuery) -> MatchSet:
+        """Find tables satisfying a reusable structured query."""
+
+        self._require_open()
+        fields = self._compile_table_query(query)
+        within = self._coerce_query_rectangle(query.within, sheet=query.sheet)
+        near = self._coerce_query_coordinate(query.near, sheet=query.sheet)
+        if (
+            query.body.mode is BodyPolicyMode.EXPLICIT
+            and within is not None
+            and (
+                query.body.bottom_row is None
+                or not within.top <= query.body.bottom_row <= within.bottom
+            )
+        ):
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_HEADER_QUERY,
+                    "explicit bottom_row must lie inside the query's within range",
+                    sheet=query.sheet,
+                    address=within.a1,
                 )
             )
+
         worksheets = (
-            (self._sheet(sheet),) if sheet is not None else tuple(self._workbook.worksheets)
+            (self._sheet(query.sheet),)
+            if query.sheet is not None
+            else tuple(self._workbook.worksheets)
         )
         matches: list[TableMatch] = []
         diagnostics: list[Diagnostic] = []
@@ -317,56 +383,70 @@ class ExcelReader:
 
         for worksheet in worksheets:
             for table in worksheet.tables.values():
+                native = self._table_match(worksheet, table)
+                if within is not None and not within.contains_rectangle(native.bounds):
+                    continue
                 projected = self._project_match(
-                    self._table_match(worksheet, table),
-                    requested,
-                    normalized,
-                    allow_non_adjacent_columns=allow_non_adjacent_columns,
+                    native,
+                    fields,
+                    allow_non_adjacent_columns=query.allow_non_adjacent_columns,
                 )
                 for match in projected:
                     matches.append(match)
                     structural_signatures.add(self._header_signature(match))
 
         for worksheet in worksheets:
+            scan_bounds = self._query_scan_bounds(worksheet, within)
+            if scan_bounds is None:
+                continue
             try:
-                self._enforce_scan_limit(worksheet)
+                self._enforce_scan_limit(worksheet, bounds=scan_bounds)
             except ExcelDataReaderError as error:
                 diagnostics.extend(error.diagnostics)
                 continue
             stop_sheet = False
             for row in worksheet.iter_rows(
-                min_row=1,
-                max_row=worksheet.max_row,
-                min_col=1,
-                max_col=worksheet.max_column,
+                min_row=scan_bounds.top,
+                max_row=scan_bounds.bottom,
+                min_col=scan_bounds.left,
+                max_col=scan_bounds.right,
             ):
-                positions: dict[str, list[tuple[int, Any]]] = {header: [] for header in normalized}
+                positions: list[list[tuple[int, Any]]] = [[] for _ in fields]
                 for cell in row:
                     if cell.value is None:
                         continue
                     canonical = normalize_header(cell.value)
-                    if canonical in positions:
-                        positions[canonical].append((cell.column, cell.value))
-                if not all(positions[header] for header in normalized):
+                    for index, field in enumerate(fields):
+                        if canonical in field.accepted:
+                            positions[index].append((cell.column, cell.value))
+                if any(
+                    field.required and not positions[index] for index, field in enumerate(fields)
+                ):
                     continue
 
-                duplicate = any(len(positions[header]) > 1 for header in normalized)
+                active = tuple(
+                    (field, positions[index])
+                    for index, field in enumerate(fields)
+                    if field.required or positions[index]
+                )
+                duplicate = any(len(found) > 1 for _, found in active)
+                match_diagnostics: tuple[Diagnostic, ...] = ()
                 if duplicate:
-                    diagnostics.append(
-                        Diagnostic(
-                            DiagnosticCode.DUPLICATE_HEADER,
-                            "a requested header appears more than once on this row",
-                            severity=Severity.WARNING,
-                            sheet=worksheet.title,
-                            address=row[0].coordinate,
-                        )
+                    warning = Diagnostic(
+                        DiagnosticCode.DUPLICATE_HEADER,
+                        "a requested or optional header appears more than once on this row",
+                        severity=Severity.WARNING,
+                        sheet=worksheet.title,
+                        address=Coordinate(row[0].row, scan_bounds.left).a1,
                     )
+                    diagnostics.append(warning)
+                    match_diagnostics = (warning,)
 
-                for selected in product(*(positions[header] for header in normalized)):
+                for selected in product(*(found for _, found in active)):
                     selected_columns = tuple(item[0] for item in selected)
                     if len(set(selected_columns)) != len(selected_columns):
                         continue
-                    if not allow_non_adjacent_columns and not self._columns_are_adjacent(
+                    if not query.allow_non_adjacent_columns and not self._columns_are_adjacent(
                         selected_columns
                     ):
                         continue
@@ -376,16 +456,25 @@ class ExcelReader:
                             name=self._column_name(raw, index),
                             source_column=column,
                             raw_header=raw,
-                            requested_header=requested[index - 1],
+                            requested_header=field.requested,
                             header_coordinate=Coordinate(header_row, column),
                         )
-                        for index, (column, raw) in enumerate(selected, start=1)
+                        for index, ((field, _), (column, raw)) in enumerate(
+                            zip(active, selected, strict=True), start=1
+                        )
                     )
+                    if (
+                        query.body.mode is BodyPolicyMode.EXPLICIT
+                        and query.body.bottom_row is not None
+                        and query.body.bottom_row < header_row
+                    ):
+                        continue
                     bottom = self._infer_body_bottom(
                         worksheet,
                         header_row,
                         selected_columns,
-                        max_blank_rows=max_blank_rows,
+                        policy=query.body,
+                        max_row=scan_bounds.bottom,
                     )
                     match = TableMatch(
                         sheet=worksheet.title,
@@ -401,7 +490,7 @@ class ExcelReader:
                         source=MatchSource.HEADER,
                         confidence=Confidence.HIGH,
                         header_row=header_row,
-                        diagnostics=(diagnostics[-1],) if duplicate else (),
+                        diagnostics=match_diagnostics,
                     )
                     if self._header_signature(match) in structural_signatures:
                         continue
@@ -420,12 +509,17 @@ class ExcelReader:
                     break
 
         matches = self._deduplicate_matches(matches)
+        if near is not None and matches:
+            minimum = min(self._distance_to_match(near, match) for match in matches)
+            matches = [
+                match for match in matches if self._distance_to_match(near, match) == minimum
+            ]
         if not matches:
             diagnostics.append(
                 Diagnostic(
                     DiagnosticCode.TABLE_NOT_FOUND,
                     "no table contained all requested headers",
-                    sheet=sheet,
+                    sheet=query.sheet,
                 )
             )
         return MatchSet(tuple(matches), tuple(diagnostics))
@@ -643,35 +737,40 @@ class ExcelReader:
     def _project_match(
         self,
         match: TableMatch,
-        requested: tuple[str, ...],
-        normalized: tuple[str, ...],
+        fields: tuple[_HeaderField, ...],
         *,
         allow_non_adjacent_columns: bool,
     ) -> tuple[TableMatch, ...]:
-        positions: dict[str, list[ColumnInfo]] = {header: [] for header in normalized}
+        positions: list[list[ColumnInfo]] = [[] for _ in fields]
         for column in match.columns:
             canonical = normalize_header(column.name)
-            if canonical in positions:
-                positions[canonical].append(column)
-        if not all(positions[header] for header in normalized):
+            for index, field in enumerate(fields):
+                if canonical in field.accepted:
+                    positions[index].append(column)
+        if any(field.required and not positions[index] for index, field in enumerate(fields)):
             return ()
+        active = tuple(
+            (field, positions[index])
+            for index, field in enumerate(fields)
+            if field.required or positions[index]
+        )
         projected: list[TableMatch] = []
-        for selected in product(*(positions[header] for header in normalized)):
+        for selected in product(*(found for _, found in active)):
             physical = tuple(column.source_column for column in selected)
             if len(set(physical)) != len(physical):
                 continue
             if not allow_non_adjacent_columns and not self._columns_are_adjacent(physical):
                 continue
             columns = tuple(
-                replace(column, requested_header=requested[index])
-                for index, column in enumerate(selected)
+                replace(column, requested_header=field.requested)
+                for (field, _), column in zip(active, selected, strict=True)
             )
             diagnostics = match.diagnostics
-            if any(len(positions[header]) > 1 for header in normalized):
+            if any(len(found) > 1 for _, found in active):
                 diagnostics += (
                     Diagnostic(
                         DiagnosticCode.DUPLICATE_HEADER,
-                        "a requested header occurs more than once in the table",
+                        "a requested or optional header occurs more than once in the table",
                         severity=Severity.WARNING,
                         sheet=match.sheet,
                         address=match.range,
@@ -686,30 +785,39 @@ class ExcelReader:
         header_row: int,
         columns: tuple[int, ...],
         *,
-        max_blank_rows: int,
+        policy: BodyPolicy,
+        max_row: int,
     ) -> int:
+        if policy.mode is BodyPolicyMode.EXPLICIT:
+            if policy.bottom_row is None:
+                raise AssertionError("validated explicit policy has no bottom row")
+            return policy.bottom_row
+
         last_nonblank = header_row
         blank_run = 0
-        for row in range(header_row + 1, worksheet.max_row + 1):
+        for row in range(header_row + 1, max_row + 1):
             if any(worksheet.cell(row, column).value is not None for column in columns):
                 last_nonblank = row
                 blank_run = 0
                 continue
+            if policy.mode is BodyPolicyMode.LAST_POPULATED:
+                continue
             blank_run += 1
-            if blank_run >= max_blank_rows:
+            if blank_run >= policy.blank_rows:
                 break
         return last_nonblank
 
-    def _validate_header_query(
-        self, headers: Sequence[str]
-    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        requested = tuple(headers)
-        normalized = tuple(normalize_header(header) for header in requested)
-        if not requested or any(not header for header in normalized):
+    def _compile_table_query(self, query: TableQuery) -> tuple[_HeaderField, ...]:
+        required_headers = tuple(query.required_headers)
+        optional_headers = tuple(query.optional_headers)
+        declared = required_headers + optional_headers
+        normalized = tuple(normalize_header(header) for header in declared)
+        if not required_headers or any(not header for header in normalized):
             raise ExcelDataReaderError(
                 Diagnostic(
                     DiagnosticCode.INVALID_HEADER_QUERY,
-                    "at least one non-empty header is required",
+                    "at least one non-empty required header is needed, and optional headers "
+                    "cannot be empty",
                 )
             )
         duplicates = sorted({item for item in normalized if normalized.count(item) > 1})
@@ -721,7 +829,50 @@ class ExcelReader:
                     + ", ".join(duplicates),
                 )
             )
-        return requested, normalized
+
+        field_by_name = {name: index for index, name in enumerate(normalized)}
+        accepted = [{name} for name in normalized]
+        owner = dict(field_by_name)
+        for raw_key, raw_aliases in query.aliases.items():
+            key = normalize_header(raw_key)
+            if key not in field_by_name:
+                raise ExcelDataReaderError(
+                    Diagnostic(
+                        DiagnosticCode.INVALID_HEADER_QUERY,
+                        f"alias key {raw_key!r} is not a declared header",
+                    )
+                )
+            field_index = field_by_name[key]
+            for raw_alias in raw_aliases:
+                alias = normalize_header(raw_alias)
+                if not alias:
+                    raise ExcelDataReaderError(
+                        Diagnostic(
+                            DiagnosticCode.INVALID_HEADER_QUERY,
+                            f"alias for {raw_key!r} cannot be empty",
+                        )
+                    )
+                previous = owner.get(alias)
+                if previous is not None and previous != field_index:
+                    raise ExcelDataReaderError(
+                        Diagnostic(
+                            DiagnosticCode.INVALID_HEADER_QUERY,
+                            f"normalized alias {alias!r} belongs to more than one header",
+                        )
+                    )
+                owner[alias] = field_index
+                accepted[field_index].add(alias)
+
+        required_count = len(required_headers)
+        return tuple(
+            _HeaderField(
+                requested=str(requested),
+                normalized=normalized[index],
+                accepted=frozenset(accepted[index]),
+                required=index < required_count,
+            )
+            for index, requested in enumerate(declared)
+        )
 
     def _iter_named_range_info(self) -> Iterator[NamedRangeInfo]:
         for name, definition in self._workbook.defined_names.items():
@@ -828,16 +979,102 @@ class ExcelReader:
                 )
             ) from error
 
-    def _enforce_scan_limit(self, worksheet: Worksheet) -> None:
-        apparent_cells = int(worksheet.max_row) * int(worksheet.max_column)
+    def _coerce_query_rectangle(
+        self,
+        value: Rectangle | str | None,
+        *,
+        sheet: str | None,
+    ) -> Rectangle | None:
+        if value is None or isinstance(value, Rectangle):
+            return value
+        if not isinstance(value, str):
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_RANGE,
+                    "within must be a Rectangle or finite rectangular A1 range",
+                    sheet=sheet,
+                )
+            )
+        return self._parse_rectangle(value, sheet=sheet or "<query>")
+
+    def _coerce_query_coordinate(
+        self,
+        value: Coordinate | str | None,
+        *,
+        sheet: str | None,
+    ) -> Coordinate | None:
+        if value is None or isinstance(value, Coordinate):
+            return value
+        if not isinstance(value, str):
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_RANGE,
+                    "near must be a Coordinate or one A1 cell address",
+                    sheet=sheet,
+                )
+            )
+        bounds = self._parse_rectangle(value, sheet=sheet or "<query>")
+        if bounds.area != 1:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_RANGE,
+                    "near must identify exactly one cell",
+                    sheet=sheet,
+                    address=bounds.a1,
+                )
+            )
+        return Coordinate(bounds.top, bounds.left)
+
+    @staticmethod
+    def _query_scan_bounds(
+        worksheet: Worksheet,
+        within: Rectangle | None,
+    ) -> Rectangle | None:
+        apparent = Rectangle(1, 1, int(worksheet.max_row), int(worksheet.max_column))
+        if within is None:
+            return apparent
+        top = max(apparent.top, within.top)
+        left = max(apparent.left, within.left)
+        bottom = min(apparent.bottom, within.bottom)
+        right = min(apparent.right, within.right)
+        if bottom < top or right < left:
+            return None
+        return Rectangle(top, left, bottom, right)
+
+    @staticmethod
+    def _distance_to_match(coordinate: Coordinate, match: TableMatch) -> int:
+        row_distance = max(
+            match.bounds.top - coordinate.row,
+            0,
+            coordinate.row - match.bounds.bottom,
+        )
+        column_distance = max(
+            match.bounds.left - coordinate.column,
+            0,
+            coordinate.column - match.bounds.right,
+        )
+        return row_distance + column_distance
+
+    def _enforce_scan_limit(
+        self,
+        worksheet: Worksheet,
+        *,
+        bounds: Rectangle | None = None,
+    ) -> None:
+        scan_bounds = bounds or Rectangle(
+            1,
+            1,
+            int(worksheet.max_row),
+            int(worksheet.max_column),
+        )
+        apparent_cells = scan_bounds.area
         if apparent_cells > self.max_scan_cells:
             raise ExcelDataReaderError(
                 Diagnostic(
                     DiagnosticCode.SCAN_LIMIT_EXCEEDED,
-                    f"apparent sheet area is {apparent_cells:,} cells; "
-                    f"limit is {self.max_scan_cells:,}",
+                    f"scan area is {apparent_cells:,} cells; limit is {self.max_scan_cells:,}",
                     sheet=worksheet.title,
-                    address=worksheet.calculate_dimension(),
+                    address=scan_bounds.a1,
                 )
             )
 

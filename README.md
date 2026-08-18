@@ -29,6 +29,46 @@ with ExcelReader.open("orders.xlsx") as workbook:
 The requested header order becomes the logical output order even if the physical worksheet
 columns are scattered.
 
+## Structured queries
+
+Use `TableQuery` when workbook producers use different labels, some fields are optional, or the
+same header set appears more than once:
+
+```python
+from excel_data_reader import BodyPolicy, ExcelReader, TableQuery
+
+query = TableQuery(
+    required_headers=("customer id", "amount"),
+    optional_headers=("invoice date", "owner"),
+    aliases={
+        "customer id": ("client no", "account number"),
+        "amount": ("gross value",),
+    },
+    sheet="Orders",
+    within="A1:M5000",
+    near="A20",
+    body=BodyPolicy.until_blank_rows(2),
+)
+
+with ExcelReader.open("orders.xlsx") as workbook:
+    match = workbook.query_tables(query).require_one()
+    table = workbook.extract(match)
+```
+
+All required headers must appear on one row. Optional headers are included when present and are
+omitted otherwise. Aliases still use exact normalized matching—there is no fuzzy guessing.
+`within` restricts the scan to one A1 rectangle, and `near` retains only the closest match; an
+equal-distance tie remains explicit ambiguity.
+
+Header-inferred tables support three body policies:
+
+- `BodyPolicy.until_blank_rows(2)` stops after a consecutive blank-row run across the selected
+  columns;
+- `BodyPolicy.last_populated()` uses the last populated row in the selected columns;
+- `BodyPolicy.through_row(500)` uses a caller-supplied bottom row.
+
+Native Excel Tables always retain their authored boundaries.
+
 ## Other deterministic entry points
 
 ```python
@@ -45,6 +85,10 @@ with ExcelReader.open("orders.xlsx", value_mode="both") as workbook:
 
 `header=None` creates `column_1`, `column_2`, and so on. Every extracted value still carries its
 original worksheet coordinate.
+
+When no reliable headers exist, prefer a known range (`read_range(..., header=None)`), a defined
+name, or a sparse whole-sheet read. The library deliberately does not guess a table solely from
+formatting, empty-space patterns, or worksheet dimensions.
 
 ## Development
 
@@ -67,6 +111,7 @@ See [`SPEC.md`](SPEC.md) for the behavioral contract.
 - blank-row tolerance;
 - rectangular defined names;
 - headerless ranges and sparse sheet reads.
+- aliases, optional headers, location hints, and body policies.
 
 Start with [`examples/README.md`](examples/README.md), or run:
 

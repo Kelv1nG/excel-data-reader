@@ -7,6 +7,8 @@ from excel_data_reader.diagnostics import (
     Severity,
 )
 from excel_data_reader.model import (
+    BodyPolicy,
+    BodyPolicyMode,
     CellData,
     ColumnInfo,
     Confidence,
@@ -23,6 +25,7 @@ from excel_data_reader.model import (
     SheetInfo,
     TableData,
     TableMatch,
+    TableQuery,
     ValueMode,
     WorkbookInventory,
 )
@@ -30,6 +33,8 @@ from excel_data_reader.normalization import normalize_header
 from excel_data_reader.reader import ExcelReader
 
 __all__ = [
+    "BodyPolicy",
+    "BodyPolicyMode",
     "CellData",
     "ColumnInfo",
     "Confidence",
@@ -51,6 +56,7 @@ __all__ = [
     "SheetInfo",
     "TableData",
     "TableMatch",
+    "TableQuery",
     "ValueMode",
     "WorkbookInventory",
     "normalize_header",

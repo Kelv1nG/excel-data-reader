@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
@@ -32,6 +32,77 @@ class MatchSource(StrEnum):
 class Confidence(StrEnum):
     STRUCTURAL = "structural"
     HIGH = "high"
+
+
+class BodyPolicyMode(StrEnum):
+    BLANK_ROWS = "blank_rows"
+    LAST_POPULATED = "last_populated"
+    EXPLICIT = "explicit"
+
+
+@dataclass(frozen=True)
+class BodyPolicy:
+    """Choose how a header-discovered table body ends.
+
+    Native Excel Tables always keep their authored boundary. These policies are
+    used only for tables inferred from a worksheet header row.
+    """
+
+    mode: BodyPolicyMode = BodyPolicyMode.BLANK_ROWS
+    blank_rows: int = 2
+    bottom_row: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "mode", BodyPolicyMode(self.mode))
+        if self.mode is BodyPolicyMode.BLANK_ROWS and self.blank_rows < 1:
+            raise ValueError("blank_rows must be at least one")
+        if self.mode is BodyPolicyMode.EXPLICIT:
+            if self.bottom_row is None or self.bottom_row < 1:
+                raise ValueError("explicit body policy requires a positive bottom_row")
+        elif self.bottom_row is not None:
+            raise ValueError("bottom_row is only valid for the explicit body policy")
+
+    @classmethod
+    def until_blank_rows(cls, count: int = 2) -> BodyPolicy:
+        return cls(BodyPolicyMode.BLANK_ROWS, blank_rows=count)
+
+    @classmethod
+    def last_populated(cls) -> BodyPolicy:
+        return cls(BodyPolicyMode.LAST_POPULATED)
+
+    @classmethod
+    def through_row(cls, bottom_row: int) -> BodyPolicy:
+        return cls(BodyPolicyMode.EXPLICIT, bottom_row=bottom_row)
+
+
+@dataclass(frozen=True)
+class TableQuery:
+    """A reusable, deterministic header-table query."""
+
+    required_headers: Sequence[str]
+    optional_headers: Sequence[str] = ()
+    aliases: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    sheet: str | None = None
+    allow_non_adjacent_columns: bool = True
+    body: BodyPolicy = field(default_factory=BodyPolicy)
+    near: Coordinate | str | None = None
+    within: Rectangle | str | None = None
+
+    def __post_init__(self) -> None:
+        required = self._headers_tuple(self.required_headers)
+        optional = self._headers_tuple(self.optional_headers)
+        aliases = {
+            str(header): self._headers_tuple(values) for header, values in self.aliases.items()
+        }
+        object.__setattr__(self, "required_headers", required)
+        object.__setattr__(self, "optional_headers", optional)
+        object.__setattr__(self, "aliases", MappingProxyType(aliases))
+
+    @staticmethod
+    def _headers_tuple(values: Sequence[str] | str) -> tuple[str, ...]:
+        if isinstance(values, str):
+            return (values,)
+        return tuple(values)
 
 
 def _column_letters(index: int) -> str:
@@ -89,6 +160,14 @@ class Rectangle:
         return (
             self.top <= coordinate.row <= self.bottom
             and self.left <= coordinate.column <= self.right
+        )
+
+    def contains_rectangle(self, rectangle: Rectangle) -> bool:
+        return (
+            self.top <= rectangle.top
+            and self.left <= rectangle.left
+            and self.bottom >= rectangle.bottom
+            and self.right >= rectangle.right
         )
 
 
