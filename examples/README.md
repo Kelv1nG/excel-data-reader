@@ -46,6 +46,10 @@ The workbook contains an actual Excel Table named `OrdersTable`, four data rows,
 amounts, and a totals row. The reader uses the authored table boundary and excludes the totals row
 from `table.rows`.
 
+The script separates `list_available_tables()`, `usual_case()`,
+`select_columns_in_logical_order()`, and `read_formula_and_cached_value()` so each pattern can be
+copied independently.
+
 ## 2. Scattered headers
 
 Workbook: `workbooks/scattered_headers.xlsx`
@@ -64,6 +68,9 @@ match = reader.find_tables(
 The logical output follows the requested order even though the physical columns differ. One blank
 row appears inside the data and remains present rather than ending the table.
 
+Additional functions demonstrate changing logical column order, stopping at the first blank row,
+and deliberately rejecting non-adjacent columns.
+
 ## 3. Named and headerless ranges
 
 Workbook: `workbooks/named_and_headerless.xlsx`
@@ -77,6 +84,9 @@ raw = reader.read_range("Raw Import", "C5:F8", header=None)
 
 The named range supplies a deterministic rectangular boundary. The raw import has no headers, so
 the reader supplies `column_1` through `column_4` while preserving every source coordinate.
+
+Separate functions also list defined names, read the same cells as an explicit range, and inspect
+the raw worksheet as sparse populated cells.
 
 ## 4. Structured table query
 
@@ -101,6 +111,8 @@ optional columns are returned after required columns; the absent `purchase order
 reject the match. `within` limits scanning, while `near` resolves repeated matching blocks by
 distance and leaves equal-distance ties ambiguous.
 
+The other functions compare `last_populated()`, `through_row()`, and an adjacent-only query.
+
 ## 5. Explainable discovery
 
 Workbook: `workbooks/scattered_headers.xlsx`
@@ -108,6 +120,9 @@ Workbook: `workbooks/scattered_headers.xlsx`
 `05_explain_query.py` calls `reader.explain(query)` and prints the scan window, number of cells
 considered, observed header coordinates, selected candidate, and rejection reasons. The returned
 `DiscoveryReport` contains the same `MatchSet` that `query_tables()` would return.
+
+The script explains three conditions separately: a successful query, a missing required header,
+and a candidate rejected because its columns are not adjacent.
 
 ## 6. Platform upload service
 
@@ -118,6 +133,9 @@ a cooperative timeout, requests bounded row extraction, and prints the stable re
 inspection hash, logical columns, and row count. The same service also accepts an open binary
 stream without loading the entire upload into memory.
 
+Additional functions demonstrate bytes versus a binary stream, inventory-only analysis, bounded
+row output, and handling no match as a response status.
+
 ## 7. Legacy Excel 97-2003 workbook
 
 Workbook: `workbooks/legacy_scattered.xls`
@@ -125,6 +143,9 @@ Workbook: `workbooks/legacy_scattered.xls`
 `07_legacy_xls.py` opens a genuine BIFF8 `.xls` file, displays the explicit legacy-compatibility
 warning, finds non-adjacent header columns, and extracts source-addressed values through the same
 `ExcelReader` API used for OOXML workbooks.
+
+The focused functions cover format inspection, header discovery, a known explicit range, and a
+sparse whole-sheet read.
 
 ## 8. Sectioned matrix
 
@@ -148,6 +169,15 @@ sector label is an ordinary cell whose following blank label cells inherit the s
 blank matrix rows. Parent header merges resolve repeated `attr1`, `attr2`, and `attr3` labels into
 unique paths such as `("group2", "attr1")`. The script prints both normalized long records and
 collision-checked wide records.
+
+The matrix examples are split into:
+
+- `usual_case()` for automatic layout inference;
+- `use_explicit_layout_hints()` for `within`, `header_rows`, and `identifier_column`;
+- `use_a_logical_section_alias()` for application-level section names;
+- `choose_a_body_policy_for_an_unmerged_section()` for alternate row boundaries;
+- `produce_long_records()` for analytical storage; and
+- `produce_wide_records()` for one row per identifier.
 
 ## Reusable API recipes
 
