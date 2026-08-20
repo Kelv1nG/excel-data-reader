@@ -123,6 +123,72 @@
           "G8": 2190.0
         }
       }
+    },
+    {
+      "id": "sectioned-matrix-merged-country-anchor",
+      "workbook": "../../examples/workbooks/sectioned_matrix.xlsx",
+      "operation": "matrix",
+      "section": "Country Identifier",
+      "query": {
+        "sections": ["Country Identifier", "Sector Identifier"],
+        "header_level_names": ["group", "attribute"],
+        "sheet": "Sectioned Matrix"
+      },
+      "expected": {
+        "section": "Country Identifier",
+        "range": "D5:L8",
+        "boundary_source": "merged_section",
+        "identifier_column": 4,
+        "header_rows": [1, 4],
+        "headers": [
+          ["group1", "attr1"],
+          ["group1", "attr2"],
+          ["group1", "attr3"],
+          ["group2", "attr1"],
+          ["group2", "attr2"],
+          ["group2", "attr3"],
+          ["group3", "attr1"],
+          ["group3", "attr2"]
+        ],
+        "cells": {
+          "E5": 11.2,
+          "J6": 23.1,
+          "L8": 15.3
+        }
+      }
+    },
+    {
+      "id": "sectioned-matrix-unmerged-sector-anchor",
+      "workbook": "../../examples/workbooks/sectioned_matrix.xlsx",
+      "operation": "matrix",
+      "section": "Sector Identifier",
+      "query": {
+        "sections": ["Country Identifier", "Sector Identifier"],
+        "header_level_names": ["group", "attribute"],
+        "sheet": "Sectioned Matrix"
+      },
+      "expected": {
+        "section": "Sector Identifier",
+        "range": "D12:L15",
+        "boundary_source": "blank_rows",
+        "identifier_column": 4,
+        "header_rows": [1, 4],
+        "headers": [
+          ["group1", "attr1"],
+          ["group1", "attr2"],
+          ["group1", "attr3"],
+          ["group2", "attr1"],
+          ["group2", "attr2"],
+          ["group2", "attr3"],
+          ["group3", "attr1"],
+          ["group3", "attr2"]
+        ],
+        "cells": {
+          "E12": 31.2,
+          "H13": 19.8,
+          "L15": 36.5
+        }
+      }
     }
   ]
 }
