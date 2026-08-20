@@ -55,6 +55,16 @@ class CandidateReason(StrEnum):
     CANDIDATE_LIMIT = "candidate_limit"
 
 
+class MatrixBoundarySource(StrEnum):
+    """Evidence that determined the final row of an unpivoted matrix section."""
+
+    MERGED_SECTION = "merged_section"
+    NEXT_SECTION = "next_section"
+    BLANK_ROWS = "blank_rows"
+    LAST_POPULATED = "last_populated"
+    EXPLICIT = "explicit"
+
+
 @dataclass(frozen=True)
 class BodyPolicy:
     """Choose how a header-discovered table body ends.
@@ -142,6 +152,113 @@ class TableQuery:
         if isinstance(values, str):
             return (values,)
         return tuple(values)
+
+
+@dataclass(frozen=True)
+class MatrixQuery:
+    """A deterministic query for row-sectioned matrices with hierarchical headers.
+
+    Attributes:
+        sections: Required logical section labels matched with exact normalization.
+        header_level_names: Field names assigned to the hierarchical levels in long
+            records; the number of names declares the required header depth.
+        aliases: Alternate exact-normalized labels keyed by a declared section.
+        sheet: Optional exact worksheet name used to limit discovery.
+        within: Optional finite A1 rectangle used to limit discovery and scan cost.
+        body: Boundary policy used when a section label has no vertical merge.
+        header_rows: Optional one-based row override with one row per header level.
+        identifier_column: Optional one-based index or Excel column letters identifying
+            the row-key column.
+    """
+
+    sections: Sequence[str]
+    header_level_names: Sequence[str] = ("group", "attribute")
+    aliases: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    sheet: str | None = None
+    within: Rectangle | str | None = None
+    body: BodyPolicy = field(default_factory=BodyPolicy)
+    header_rows: Sequence[int] | None = None
+    identifier_column: int | str | None = None
+
+    def __post_init__(self) -> None:
+        """Freeze sequences and reject ambiguous or inconsistent query fields."""
+
+        sections = self._text_tuple(self.sections)
+        level_names = self._text_tuple(self.header_level_names)
+        normalized_sections = tuple(normalize_header(value) for value in sections)
+        normalized_levels = tuple(normalize_header(value) for value in level_names)
+        if not sections or any(not value for value in normalized_sections):
+            raise ValueError("at least one non-empty matrix section is required")
+        if len(set(normalized_sections)) != len(normalized_sections):
+            raise ValueError("matrix sections must be unique after normalization")
+        if not level_names or any(not value for value in normalized_levels):
+            raise ValueError("at least one non-empty matrix header level name is required")
+        if len(set(normalized_levels)) != len(normalized_levels):
+            raise ValueError("matrix header level names must be unique after normalization")
+        reserved = {
+            "section",
+            "identifier",
+            "value",
+            "source sheet",
+            "source cell",
+            "source row",
+            "source column",
+            "identifier cell",
+        }
+        collisions = sorted(set(normalized_levels) & reserved)
+        if collisions:
+            raise ValueError(
+                "matrix header level names conflict with record fields: " + ", ".join(collisions)
+            )
+
+        aliases = {
+            str(section): self._text_tuple(values) for section, values in self.aliases.items()
+        }
+        header_rows = None if self.header_rows is None else tuple(self.header_rows)
+        if header_rows is not None:
+            if len(header_rows) != len(level_names):
+                raise ValueError("header_rows must contain one row for each header level")
+            if (
+                any(
+                    isinstance(row, bool) or not isinstance(row, int) or row < 1
+                    for row in header_rows
+                )
+                or tuple(sorted(header_rows)) != header_rows
+                or len(set(header_rows)) != len(header_rows)
+            ):
+                raise ValueError("header_rows must be unique positive integers in ascending order")
+
+        identifier_column = self.identifier_column
+        if isinstance(identifier_column, str):
+            identifier_column = identifier_column.strip().upper()
+            if not identifier_column or not identifier_column.isalpha():
+                raise ValueError("identifier_column must be a positive index or column letters")
+        elif identifier_column is not None and (
+            isinstance(identifier_column, bool)
+            or not isinstance(identifier_column, int)
+            or identifier_column < 1
+        ):
+            raise ValueError("identifier_column must be a positive index or column letters")
+        if not isinstance(self.body, BodyPolicy):
+            raise TypeError("body must be a BodyPolicy")
+
+        object.__setattr__(self, "sections", sections)
+        object.__setattr__(self, "header_level_names", level_names)
+        object.__setattr__(self, "aliases", MappingProxyType(aliases))
+        object.__setattr__(self, "header_rows", header_rows)
+        object.__setattr__(self, "identifier_column", identifier_column)
+
+    @staticmethod
+    def _text_tuple(values: Sequence[str] | str) -> tuple[str, ...]:
+        """Coerce one string or an ordered string sequence into a tuple.
+
+        Args:
+            values: Single string or ordered sequence to freeze.
+        """
+
+        if isinstance(values, str):
+            return (values,)
+        return tuple(str(value) for value in values)
 
 
 def _column_letters(index: int) -> str:
@@ -447,6 +564,230 @@ class TableData:
         return tuple(
             MappingProxyType(dict(zip(names, row.values, strict=True))) for row in self.rows
         )
+
+
+@dataclass(frozen=True)
+class MatrixHeader:
+    """One physical value column identified by an ordered hierarchical header path.
+
+    Attributes:
+        labels: Authored header labels from outermost to innermost level.
+        coordinates: Source coordinates corresponding to each header label.
+        source_column: One-based physical worksheet column containing matrix values.
+    """
+
+    labels: tuple[str, ...]
+    coordinates: tuple[Coordinate, ...]
+    source_column: int
+
+    def flatten(self, separator: str = "__") -> str:
+        """Join the hierarchical labels into one display or wide-record name.
+
+        Args:
+            separator: Text inserted between adjacent header levels.
+        """
+
+        if not separator:
+            raise ValueError("matrix header separator cannot be empty")
+        return separator.join(self.labels)
+
+
+@dataclass(frozen=True)
+class MatrixMatch:
+    """A discovered matrix row section and its shared hierarchical columns.
+
+    Attributes:
+        section: Logical requested section name.
+        raw_section: Authored label value found in the workbook.
+        sheet: Worksheet containing the section.
+        anchor: Cell or merged rectangle containing the section label.
+        header_level_names: Field names assigned to hierarchical header levels.
+        header_rows: One-based authored rows supplying the header levels.
+        headers: Resolved hierarchical value columns in physical order.
+        identifier_column: One-based physical row-identifier column.
+        data_bounds: Inclusive rectangle from identifiers through matrix values.
+        boundary_source: Evidence that determined the final section row.
+        diagnostics: Warnings attached specifically to this section.
+    """
+
+    section: str
+    raw_section: Any
+    sheet: str
+    anchor: Rectangle
+    header_level_names: tuple[str, ...]
+    header_rows: tuple[int, ...]
+    headers: tuple[MatrixHeader, ...]
+    identifier_column: int
+    data_bounds: Rectangle
+    boundary_source: MatrixBoundarySource
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    @property
+    def range(self) -> str:
+        """Return the section's data rectangle in A1 notation."""
+
+        return self.data_bounds.a1
+
+
+@dataclass(frozen=True)
+class MatrixMatchSet:
+    """Discovered matrix sections plus stable missing or ambiguity diagnostics.
+
+    Attributes:
+        matches: Matrix sections discovered across the requested worksheets.
+        diagnostics: Stable missing, ambiguity, resource, or malformed-layout details.
+    """
+
+    matches: tuple[MatrixMatch, ...]
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    def require_section(self, section: str) -> MatrixMatch:
+        """Return one logical section or raise not-found or ambiguity diagnostics.
+
+        Args:
+            section: Requested logical section name matched after normalization.
+        """
+
+        normalized = normalize_header(section)
+        matches = tuple(
+            match for match in self.matches if normalize_header(match.section) == normalized
+        )
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise ExcelDataReaderError(
+                self.diagnostics
+                or Diagnostic(
+                    DiagnosticCode.MATRIX_SECTION_NOT_FOUND,
+                    f"matrix section {section!r} was not found",
+                )
+            )
+        locations = ", ".join(f"{match.sheet}!{match.anchor.a1}" for match in matches)
+        raise ExcelDataReaderError(
+            Diagnostic(
+                DiagnosticCode.AMBIGUOUS_MATRIX_SECTION,
+                f"matrix section {section!r} matched {len(matches)} anchors: {locations}",
+            )
+        )
+
+
+@dataclass(frozen=True)
+class MatrixValue:
+    """One source-addressed value at a row identifier and hierarchical column path.
+
+    Attributes:
+        section: Logical section containing the value.
+        identifier: Authored identifier for the value's physical row.
+        identifier_cell: Coordinate-preserving identifier cell data.
+        header: Hierarchical header path for the value's physical column.
+        cell: Coordinate-preserving matrix value cell data.
+    """
+
+    section: str
+    identifier: Any
+    identifier_cell: CellData
+    header: MatrixHeader
+    cell: CellData
+
+
+@dataclass(frozen=True)
+class MatrixData:
+    """Extracted values for one discovered matrix section.
+
+    Attributes:
+        match: Matrix section and hierarchical columns used for extraction.
+        values: Source-addressed values in physical row-major order.
+    """
+
+    match: MatrixMatch
+    values: tuple[MatrixValue, ...]
+
+    def long_records(
+        self,
+        *,
+        include_blank_values: bool = True,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Return schema-stable analytical records with one row per matrix cell.
+
+        Args:
+            include_blank_values: Whether records whose matrix value is ``None`` are
+                retained.
+        """
+
+        records: list[Mapping[str, Any]] = []
+        for item in self.values:
+            if item.cell.value is None and not include_blank_values:
+                continue
+            record: dict[str, Any] = {
+                "section": item.section,
+                "identifier": item.identifier,
+            }
+            record.update(zip(self.match.header_level_names, item.header.labels, strict=True))
+            record.update(
+                {
+                    "value": item.cell.value,
+                    "source_sheet": item.cell.sheet,
+                    "source_cell": item.cell.address,
+                    "source_row": item.cell.coordinate.row,
+                    "source_column": item.cell.coordinate.column,
+                    "identifier_cell": item.identifier_cell.address,
+                }
+            )
+            records.append(MappingProxyType(record))
+        return tuple(records)
+
+    def wide_records(self, *, separator: str = "__") -> tuple[Mapping[str, Any], ...]:
+        """Return one record per identifier with flattened hierarchical headers.
+
+        Args:
+            separator: Text inserted between header levels in generated column names.
+        """
+
+        names = tuple(header.flatten(separator) for header in self.match.headers)
+        normalized = tuple(normalize_header(name) for name in names)
+        fixed = {
+            normalize_header(name)
+            for name in (
+                "section",
+                "identifier",
+                "source_sheet",
+                "source_row",
+                "identifier_cell",
+            )
+        }
+        duplicates = sorted({name for name in normalized if normalized.count(name) > 1})
+        collisions = sorted(set(normalized) & fixed)
+        if duplicates or collisions:
+            details = duplicates + collisions
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.DUPLICATE_MATRIX_HEADER,
+                    "flattened matrix headers are not unique: " + ", ".join(details),
+                    sheet=self.match.sheet,
+                    address=self.match.data_bounds.a1,
+                )
+            )
+
+        by_row: dict[int, dict[str, Any]] = {}
+        header_names = {
+            header.source_column: name
+            for header, name in zip(self.match.headers, names, strict=True)
+        }
+        for item in self.values:
+            row = item.cell.coordinate.row
+            record = by_row.setdefault(
+                row,
+                {
+                    "section": item.section,
+                    "identifier": item.identifier,
+                    **dict.fromkeys(names),
+                    "source_sheet": item.cell.sheet,
+                    "source_row": row,
+                    "identifier_cell": item.identifier_cell.address,
+                },
+            )
+            record[header_names[item.header.source_column]] = item.cell.value
+        return tuple(MappingProxyType(record) for record in by_row.values())
 
 
 @dataclass(frozen=True)

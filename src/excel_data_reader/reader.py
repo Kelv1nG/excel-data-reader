@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from itertools import product
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, range_boundaries
@@ -35,6 +35,13 @@ from excel_data_reader.model import (
     HeaderEvidence,
     MatchSet,
     MatchSource,
+    MatrixBoundarySource,
+    MatrixData,
+    MatrixHeader,
+    MatrixMatch,
+    MatrixMatchSet,
+    MatrixQuery,
+    MatrixValue,
     NamedRangeInfo,
     NativeTableInfo,
     RangeReference,
@@ -58,6 +65,19 @@ class _HeaderField:
     normalized: str
     accepted: frozenset[str]
     required: bool
+
+
+@dataclass(frozen=True)
+class _MatrixSectionField:
+    requested: str
+    accepted: frozenset[str]
+
+
+@dataclass(frozen=True)
+class _MatrixSectionAnchor:
+    field: _MatrixSectionField
+    raw: Any
+    bounds: Rectangle
 
 
 @dataclass
@@ -507,6 +527,171 @@ class ExcelReader:
         result = self._query_tables(query, trace=trace)
         near = self._coerce_query_coordinate(query.near, sheet=query.sheet)
         return self._finalize_discovery_report(query, result, trace, near)
+
+    def find_matrices(self, query: MatrixQuery) -> MatrixMatchSet:
+        """Discover row sections beneath shared hierarchical column headers.
+
+        Args:
+            query: Section labels, header levels, scope, and optional layout hints.
+        """
+
+        self._require_open()
+        fields = self._compile_matrix_query(query)
+        within = self._coerce_query_rectangle(query.within, sheet=query.sheet)
+        worksheets = (
+            (self._sheet(query.sheet),)
+            if query.sheet is not None
+            else tuple(self._workbook.worksheets)
+        )
+        matches: list[MatrixMatch] = []
+        diagnostics: list[Diagnostic] = []
+        located: dict[str, list[_MatrixSectionAnchor]] = {field.requested: [] for field in fields}
+
+        for worksheet in worksheets:
+            self._checkpoint()
+            scan_bounds = self._query_scan_bounds(worksheet, within)
+            if scan_bounds is None:
+                continue
+            try:
+                self._enforce_scan_limit(worksheet, bounds=scan_bounds)
+            except ExcelDataReaderError as error:
+                diagnostics.extend(error.diagnostics)
+                continue
+
+            anchors = self._matrix_section_anchors(worksheet, scan_bounds, fields)
+            for anchor in anchors:
+                located[anchor.field.requested].append(anchor)
+            ordered = sorted(anchors, key=lambda item: (item.bounds.top, item.bounds.left))
+            shared_headers: tuple[tuple[int, ...], tuple[MatrixHeader, ...]] | None = None
+            for index, anchor in enumerate(ordered):
+                self._checkpoint()
+                next_row = next(
+                    (
+                        candidate.bounds.top
+                        for candidate in ordered[index + 1 :]
+                        if candidate.bounds.top > anchor.bounds.top
+                    ),
+                    None,
+                )
+                hard_bottom = scan_bounds.bottom if next_row is None else next_row - 1
+                try:
+                    if shared_headers is None:
+                        shared_headers = self._resolve_matrix_headers(
+                            worksheet,
+                            anchor,
+                            query,
+                            scan_bounds,
+                        )
+                    header_rows, headers = shared_headers
+                    identifier_column = self._matrix_identifier_column(
+                        worksheet,
+                        anchor,
+                        headers,
+                        query,
+                        hard_bottom,
+                    )
+                    bottom, boundary_source = self._matrix_section_bottom(
+                        worksheet,
+                        anchor,
+                        identifier_column,
+                        headers,
+                        policy=query.body,
+                        hard_bottom=hard_bottom,
+                        ended_by_next_section=next_row is not None,
+                    )
+                except ExcelDataReaderError as error:
+                    diagnostics.extend(error.diagnostics)
+                    continue
+
+                warnings = self._matrix_row_diagnostics(
+                    worksheet,
+                    anchor.bounds.top,
+                    bottom,
+                    identifier_column,
+                    headers,
+                )
+                diagnostics.extend(warnings)
+                matches.append(
+                    MatrixMatch(
+                        section=anchor.field.requested,
+                        raw_section=anchor.raw,
+                        sheet=worksheet.title,
+                        anchor=anchor.bounds,
+                        header_level_names=tuple(query.header_level_names),
+                        header_rows=header_rows,
+                        headers=headers,
+                        identifier_column=identifier_column,
+                        data_bounds=Rectangle(
+                            anchor.bounds.top,
+                            identifier_column,
+                            bottom,
+                            max(header.source_column for header in headers),
+                        ),
+                        boundary_source=boundary_source,
+                        diagnostics=warnings,
+                    )
+                )
+
+        for field in fields:
+            anchors = located[field.requested]
+            if not anchors:
+                diagnostics.append(
+                    Diagnostic(
+                        DiagnosticCode.MATRIX_SECTION_NOT_FOUND,
+                        f"matrix section {field.requested!r} was not found",
+                        sheet=query.sheet,
+                    )
+                )
+            elif len(anchors) > 1:
+                locations = ", ".join(anchor.bounds.a1 for anchor in anchors)
+                diagnostics.append(
+                    Diagnostic(
+                        DiagnosticCode.AMBIGUOUS_MATRIX_SECTION,
+                        f"matrix section {field.requested!r} matched "
+                        f"{len(anchors)} anchors: {locations}",
+                        sheet=query.sheet,
+                    )
+                )
+        return MatrixMatchSet(tuple(matches), tuple(diagnostics))
+
+    def extract_matrix(self, match: MatrixMatch) -> MatrixData:
+        """Extract coordinate-preserving values for one discovered matrix section.
+
+        Args:
+            match: Discovered matrix section and hierarchical value columns.
+        """
+
+        worksheet = self._sheet(match.sheet)
+        hidden_rows = self._hidden_rows(worksheet)
+        hidden_columns = self._hidden_columns(worksheet)
+        values: list[MatrixValue] = []
+        for row in range(match.data_bounds.top, match.data_bounds.bottom + 1):
+            self._checkpoint()
+            identifier_cell = self._cell_data(
+                worksheet,
+                row,
+                match.identifier_column,
+                hidden_rows=hidden_rows,
+                hidden_columns=hidden_columns,
+            )
+            for header in match.headers:
+                cell = self._cell_data(
+                    worksheet,
+                    row,
+                    header.source_column,
+                    hidden_rows=hidden_rows,
+                    hidden_columns=hidden_columns,
+                )
+                values.append(
+                    MatrixValue(
+                        section=match.section,
+                        identifier=identifier_cell.value,
+                        identifier_cell=identifier_cell,
+                        header=header,
+                        cell=cell,
+                    )
+                )
+        return MatrixData(match, tuple(values))
 
     def _query_tables(
         self,
@@ -1433,6 +1618,551 @@ class ExcelReader:
             )
             for index, requested in enumerate(declared)
         )
+
+    def _compile_matrix_query(
+        self,
+        query: MatrixQuery,
+    ) -> tuple[_MatrixSectionField, ...]:
+        """Normalize matrix sections and reject aliases with ambiguous ownership.
+
+        Args:
+            query: Matrix query whose section labels and aliases are compiled.
+        """
+
+        sections = tuple(str(section) for section in query.sections)
+        normalized = tuple(normalize_header(section) for section in sections)
+        field_by_name = {name: index for index, name in enumerate(normalized)}
+        accepted = [{name} for name in normalized]
+        owner = dict(field_by_name)
+        for raw_key, raw_aliases in query.aliases.items():
+            key = normalize_header(raw_key)
+            if key not in field_by_name:
+                raise ExcelDataReaderError(
+                    Diagnostic(
+                        DiagnosticCode.INVALID_MATRIX_QUERY,
+                        f"matrix alias key {raw_key!r} is not a declared section",
+                    )
+                )
+            field_index = field_by_name[key]
+            for raw_alias in raw_aliases:
+                alias = normalize_header(raw_alias)
+                if not alias:
+                    raise ExcelDataReaderError(
+                        Diagnostic(
+                            DiagnosticCode.INVALID_MATRIX_QUERY,
+                            f"matrix alias for {raw_key!r} cannot be empty",
+                        )
+                    )
+                previous = owner.get(alias)
+                if previous is not None and previous != field_index:
+                    raise ExcelDataReaderError(
+                        Diagnostic(
+                            DiagnosticCode.INVALID_MATRIX_QUERY,
+                            f"normalized matrix alias {alias!r} belongs to more than one section",
+                        )
+                    )
+                owner[alias] = field_index
+                accepted[field_index].add(alias)
+        return tuple(
+            _MatrixSectionField(section, frozenset(accepted[index]))
+            for index, section in enumerate(sections)
+        )
+
+    def _matrix_section_anchors(
+        self,
+        worksheet: Worksheet,
+        bounds: Rectangle,
+        fields: tuple[_MatrixSectionField, ...],
+    ) -> tuple[_MatrixSectionAnchor, ...]:
+        """Find exact normalized section anchors inside one worksheet rectangle.
+
+        Args:
+            worksheet: Worksheet scanned for requested section labels.
+            bounds: Inclusive rectangle limiting the scan.
+            fields: Compiled section labels and accepted aliases.
+        """
+
+        anchors: list[_MatrixSectionAnchor] = []
+        seen: set[tuple[str, int, int]] = set()
+        for row in worksheet.iter_rows(
+            min_row=bounds.top,
+            max_row=bounds.bottom,
+            min_col=bounds.left,
+            max_col=bounds.right,
+        ):
+            self._checkpoint()
+            for cell in row:
+                if cell.value is None:
+                    continue
+                normalized = normalize_header(cell.value)
+                for field in fields:
+                    if normalized not in field.accepted:
+                        continue
+                    anchor_bounds = self._merged_rectangle(worksheet, cell.row, cell.column)
+                    if not bounds.contains_rectangle(anchor_bounds):
+                        continue
+                    signature = (field.requested, anchor_bounds.top, anchor_bounds.left)
+                    if signature not in seen:
+                        seen.add(signature)
+                        anchors.append(_MatrixSectionAnchor(field, cell.value, anchor_bounds))
+        return tuple(anchors)
+
+    def _resolve_matrix_headers(
+        self,
+        worksheet: Worksheet,
+        anchor: _MatrixSectionAnchor,
+        query: MatrixQuery,
+        scan_bounds: Rectangle,
+    ) -> tuple[tuple[int, ...], tuple[MatrixHeader, ...]]:
+        """Resolve shared hierarchical headers above one section anchor.
+
+        Args:
+            worksheet: Worksheet containing the matrix.
+            anchor: Section anchor below the shared header band.
+            query: Matrix query containing level names and optional row hints.
+            scan_bounds: Inclusive query scan rectangle.
+        """
+
+        level_count = len(query.header_level_names)
+        explicit_rows = None if query.header_rows is None else tuple(query.header_rows)
+        leaf_row = (
+            explicit_rows[-1]
+            if explicit_rows is not None
+            else self._infer_matrix_leaf_row(worksheet, anchor, scan_bounds)
+        )
+        if not scan_bounds.top <= leaf_row < anchor.bounds.top:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.MATRIX_HEADER_NOT_FOUND,
+                    "matrix header rows must lie above the section anchor",
+                    sheet=worksheet.title,
+                    address=anchor.bounds.a1,
+                )
+            )
+
+        value_columns = tuple(
+            column
+            for column in range(
+                max(scan_bounds.left, anchor.bounds.right + 1), scan_bounds.right + 1
+            )
+            if self._matrix_header_value(worksheet, leaf_row, column)[0] is not None
+        )
+        if not value_columns:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.MATRIX_HEADER_NOT_FOUND,
+                    "no populated matrix leaf headers were found above the section",
+                    sheet=worksheet.title,
+                    address=Coordinate(leaf_row, anchor.bounds.right + 1).a1,
+                )
+            )
+
+        resolved: list[tuple[int, tuple[str | None, ...], tuple[Coordinate | None, ...]]] = []
+        if explicit_rows is not None:
+            for row in explicit_rows:
+                labels, coordinates = self._matrix_header_vector(
+                    worksheet,
+                    row,
+                    value_columns,
+                    fill_forward=row != leaf_row,
+                )
+                resolved.append((row, labels, coordinates))
+        else:
+            leaf_labels, leaf_coordinates = self._matrix_header_vector(
+                worksheet,
+                leaf_row,
+                value_columns,
+                fill_forward=False,
+            )
+            resolved.append((leaf_row, leaf_labels, leaf_coordinates))
+            signatures = {tuple(normalize_header(label or "") for label in leaf_labels)}
+            source_rows = {leaf_row}
+            for row in range(leaf_row - 1, scan_bounds.top - 1, -1):
+                labels, coordinates = self._matrix_header_vector(
+                    worksheet,
+                    row,
+                    value_columns,
+                    fill_forward=True,
+                )
+                if all(label is None for label in labels):
+                    continue
+                signature = tuple(normalize_header(label or "") for label in labels)
+                coordinate_rows = {
+                    coordinate.row for coordinate in coordinates if coordinate is not None
+                }
+                source_row = min(coordinate_rows) if coordinate_rows else row
+                if signature in signatures or source_row in source_rows:
+                    continue
+                resolved.append((source_row, labels, coordinates))
+                signatures.add(signature)
+                source_rows.add(source_row)
+                if len(resolved) == level_count:
+                    break
+            resolved.reverse()
+
+        if len(resolved) != level_count:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.MATRIX_HEADER_NOT_FOUND,
+                    f"could not resolve {level_count} complete matrix header levels",
+                    sheet=worksheet.title,
+                    address=anchor.bounds.a1,
+                )
+            )
+
+        complete_indexes = tuple(
+            index
+            for index in range(len(value_columns))
+            if all(
+                resolved[level][1][index] is not None and resolved[level][2][index] is not None
+                for level in range(level_count)
+            )
+        )
+        if not complete_indexes:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.MATRIX_HEADER_NOT_FOUND,
+                    f"no value column resolved all {level_count} matrix header levels",
+                    sheet=worksheet.title,
+                    address=anchor.bounds.a1,
+                )
+            )
+        header_rows = tuple(row for row, _, _ in resolved)
+        headers = tuple(
+            MatrixHeader(
+                labels=tuple(str(resolved[level][1][index]) for level in range(level_count)),
+                coordinates=tuple(
+                    cast(Coordinate, resolved[level][2][index]) for level in range(level_count)
+                ),
+                source_column=value_columns[index],
+            )
+            for index in complete_indexes
+        )
+        return header_rows, headers
+
+    def _infer_matrix_leaf_row(
+        self,
+        worksheet: Worksheet,
+        anchor: _MatrixSectionAnchor,
+        scan_bounds: Rectangle,
+    ) -> int:
+        """Infer the leaf-header row from merged parents or nearby populated rows.
+
+        Args:
+            worksheet: Worksheet containing the matrix.
+            anchor: Section anchor below the candidate header band.
+            scan_bounds: Inclusive query scan rectangle.
+        """
+
+        bands: dict[tuple[int, int], int] = {}
+        for merged in self._merged_rectangles(worksheet):
+            if (
+                merged.bottom >= anchor.bounds.top
+                or merged.right <= merged.left
+                or merged.right <= anchor.bounds.right
+                or merged.top < scan_bounds.top
+                or merged.right < scan_bounds.left
+            ):
+                continue
+            if worksheet.cell(merged.top, merged.left).value is None:
+                continue
+            key = (merged.top, merged.bottom)
+            bands[key] = bands.get(key, 0) + merged.width
+        for (_, bottom), _ in sorted(
+            bands.items(),
+            key=lambda item: (item[0][1], item[1]),
+            reverse=True,
+        ):
+            leaf_row = bottom + 1
+            if leaf_row >= anchor.bounds.top:
+                continue
+            if any(
+                self._matrix_header_value(worksheet, leaf_row, column)[0] is not None
+                for column in range(anchor.bounds.right + 1, scan_bounds.right + 1)
+            ):
+                return leaf_row
+
+        for row in range(anchor.bounds.top - 1, scan_bounds.top - 1, -1):
+            if any(
+                worksheet.cell(row, column).value is not None
+                for column in range(anchor.bounds.right + 1, scan_bounds.right + 1)
+            ):
+                return row
+        raise ExcelDataReaderError(
+            Diagnostic(
+                DiagnosticCode.MATRIX_HEADER_NOT_FOUND,
+                "no matrix leaf-header row was found above the section",
+                sheet=worksheet.title,
+                address=anchor.bounds.a1,
+            )
+        )
+
+    def _matrix_header_vector(
+        self,
+        worksheet: Worksheet,
+        row: int,
+        columns: tuple[int, ...],
+        *,
+        fill_forward: bool,
+    ) -> tuple[tuple[str | None, ...], tuple[Coordinate | None, ...]]:
+        """Resolve one hierarchical header level across physical value columns.
+
+        Args:
+            worksheet: Worksheet containing the header level.
+            row: One-based row inspected for labels.
+            columns: One-based value columns requiring header labels.
+            fill_forward: Whether an unmerged label applies until the next label.
+        """
+
+        labels: list[str | None] = []
+        coordinates: list[Coordinate | None] = []
+        previous: tuple[str, Coordinate] | None = None
+        for column in columns:
+            raw, coordinate = self._matrix_header_value(worksheet, row, column)
+            current = None if raw is None or not normalize_header(raw) else (str(raw), coordinate)
+            if current is None and fill_forward and previous is not None:
+                previous_bounds = self._merged_rectangle(
+                    worksheet,
+                    previous[1].row,
+                    previous[1].column,
+                )
+                if previous_bounds.width == 1:
+                    current = previous
+            if current is None:
+                labels.append(None)
+                coordinates.append(None)
+                continue
+            label, source = current
+            labels.append(label)
+            coordinates.append(source)
+            previous = current
+        return tuple(labels), tuple(coordinates)
+
+    @staticmethod
+    def _matrix_header_value(
+        worksheet: Worksheet,
+        row: int,
+        column: int,
+    ) -> tuple[Any | None, Coordinate]:
+        """Return a header value and authored coordinate through merged cells.
+
+        Args:
+            worksheet: Worksheet containing the candidate header cell.
+            row: One-based physical row index.
+            column: One-based physical column index.
+        """
+
+        for merged in ExcelReader._merged_rectangles(worksheet):
+            if merged.top <= row <= merged.bottom and merged.left <= column <= merged.right:
+                source = Coordinate(merged.top, merged.left)
+                return worksheet.cell(source.row, source.column).value, source
+        return worksheet.cell(row, column).value, Coordinate(row, column)
+
+    @staticmethod
+    def _merged_rectangle(worksheet: Worksheet, row: int, column: int) -> Rectangle:
+        """Return the merged rectangle containing a cell or the cell itself.
+
+        Args:
+            worksheet: Worksheet whose merged ranges are inspected.
+            row: One-based physical row index.
+            column: One-based physical column index.
+        """
+
+        for merged in ExcelReader._merged_rectangles(worksheet):
+            if merged.top <= row <= merged.bottom and merged.left <= column <= merged.right:
+                return merged
+        return Rectangle(row, column, row, column)
+
+    @staticmethod
+    def _merged_rectangles(worksheet: Worksheet) -> tuple[Rectangle, ...]:
+        """Return worksheet merged ranges as adapter-neutral rectangles.
+
+        Args:
+            worksheet: Worksheet whose merged ranges are converted.
+        """
+
+        rectangles: list[Rectangle] = []
+        merged_ranges = cast(Iterable[Any], worksheet.merged_cells.ranges)
+        for reference in (str(item) for item in merged_ranges):
+            min_col, min_row, max_col, max_row = range_boundaries(reference)
+            if None in {min_col, min_row, max_col, max_row}:
+                continue
+            rectangles.append(Rectangle(int(min_row), int(min_col), int(max_row), int(max_col)))
+        return tuple(rectangles)
+
+    def _matrix_identifier_column(
+        self,
+        worksheet: Worksheet,
+        anchor: _MatrixSectionAnchor,
+        headers: tuple[MatrixHeader, ...],
+        query: MatrixQuery,
+        hard_bottom: int,
+    ) -> int:
+        """Resolve an override or infer the uniquely densest row-identifier column.
+
+        Args:
+            worksheet: Worksheet containing the matrix section.
+            anchor: Section anchor to the left of candidate identifier columns.
+            headers: Resolved matrix value columns.
+            query: Matrix query containing an optional identifier-column hint.
+            hard_bottom: Inclusive provisional bottom used for density scoring.
+        """
+
+        first_value_column = min(header.source_column for header in headers)
+        if query.identifier_column is not None:
+            try:
+                column = (
+                    column_index_from_string(query.identifier_column)
+                    if isinstance(query.identifier_column, str)
+                    else query.identifier_column
+                )
+            except ValueError as error:
+                raise ExcelDataReaderError(
+                    Diagnostic(
+                        DiagnosticCode.INVALID_MATRIX_QUERY,
+                        f"identifier column {query.identifier_column!r} is not valid Excel letters",
+                        sheet=worksheet.title,
+                    )
+                ) from error
+            if not anchor.bounds.right < column < first_value_column:
+                raise ExcelDataReaderError(
+                    Diagnostic(
+                        DiagnosticCode.INVALID_MATRIX_QUERY,
+                        "identifier_column must lie between the section anchor and value columns",
+                        sheet=worksheet.title,
+                        address=Coordinate(anchor.bounds.top, column).a1,
+                    )
+                )
+            return column
+
+        candidates = range(anchor.bounds.right + 1, first_value_column)
+        scores = {
+            column: sum(
+                worksheet.cell(row, column).value is not None
+                for row in range(anchor.bounds.top, hard_bottom + 1)
+            )
+            for column in candidates
+        }
+        maximum = max(scores.values(), default=0)
+        if maximum == 0:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.MATRIX_IDENTIFIER_NOT_FOUND,
+                    "no populated identifier column was found between the section and values",
+                    sheet=worksheet.title,
+                    address=anchor.bounds.a1,
+                )
+            )
+        winners = tuple(column for column, score in scores.items() if score == maximum)
+        if len(winners) != 1:
+            addresses = ", ".join(Coordinate(anchor.bounds.top, column).a1 for column in winners)
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.AMBIGUOUS_IDENTIFIER_COLUMN,
+                    f"identifier-column inference tied across {addresses}",
+                    sheet=worksheet.title,
+                    address=anchor.bounds.a1,
+                )
+            )
+        return winners[0]
+
+    def _matrix_section_bottom(
+        self,
+        worksheet: Worksheet,
+        anchor: _MatrixSectionAnchor,
+        identifier_column: int,
+        headers: tuple[MatrixHeader, ...],
+        *,
+        policy: BodyPolicy,
+        hard_bottom: int,
+        ended_by_next_section: bool,
+    ) -> tuple[int, MatrixBoundarySource]:
+        """Resolve one section's final data row from structural and query evidence.
+
+        Args:
+            worksheet: Worksheet containing the matrix section.
+            anchor: Section anchor that supplies the starting row.
+            identifier_column: One-based physical row-identifier column.
+            headers: Resolved matrix value columns.
+            policy: Fallback boundary policy for an unmerged section label.
+            hard_bottom: Inclusive bound imposed by the next section or query window.
+            ended_by_next_section: Whether ``hard_bottom`` precedes another anchor.
+        """
+
+        start = anchor.bounds.top
+        if anchor.bounds.bottom > anchor.bounds.top:
+            return min(anchor.bounds.bottom, hard_bottom), MatrixBoundarySource.MERGED_SECTION
+        if policy.mode is BodyPolicyMode.EXPLICIT:
+            if policy.bottom_row is None or not start <= policy.bottom_row <= hard_bottom:
+                raise ExcelDataReaderError(
+                    Diagnostic(
+                        DiagnosticCode.INVALID_MATRIX_QUERY,
+                        "explicit matrix bottom row must lie inside the section search bounds",
+                        sheet=worksheet.title,
+                        address=anchor.bounds.a1,
+                    )
+                )
+            return policy.bottom_row, MatrixBoundarySource.EXPLICIT
+
+        columns = (identifier_column, *(header.source_column for header in headers))
+        last_nonblank = start - 1
+        blank_run = 0
+        stopped_on_blanks = False
+        for row in range(start, hard_bottom + 1):
+            self._checkpoint()
+            if any(worksheet.cell(row, column).value is not None for column in columns):
+                last_nonblank = row
+                blank_run = 0
+                continue
+            if policy.mode is BodyPolicyMode.LAST_POPULATED:
+                continue
+            blank_run += 1
+            if blank_run >= policy.blank_rows:
+                stopped_on_blanks = True
+                break
+        bottom = max(start, last_nonblank)
+        if stopped_on_blanks:
+            return bottom, MatrixBoundarySource.BLANK_ROWS
+        if ended_by_next_section:
+            return bottom, MatrixBoundarySource.NEXT_SECTION
+        return bottom, MatrixBoundarySource.LAST_POPULATED
+
+    @staticmethod
+    def _matrix_row_diagnostics(
+        worksheet: Worksheet,
+        start_row: int,
+        bottom_row: int,
+        identifier_column: int,
+        headers: tuple[MatrixHeader, ...],
+    ) -> tuple[Diagnostic, ...]:
+        """Warn when populated matrix rows lack an individual identifier.
+
+        Args:
+            worksheet: Worksheet containing the matrix section.
+            start_row: Inclusive first section row.
+            bottom_row: Inclusive final section row.
+            identifier_column: One-based physical row-identifier column.
+            headers: Resolved matrix value columns checked for populated values.
+        """
+
+        diagnostics: list[Diagnostic] = []
+        for row in range(start_row, bottom_row + 1):
+            if worksheet.cell(row, identifier_column).value is not None:
+                continue
+            if not any(
+                worksheet.cell(row, header.source_column).value is not None for header in headers
+            ):
+                continue
+            diagnostics.append(
+                Diagnostic(
+                    DiagnosticCode.MISSING_ROW_IDENTIFIER,
+                    "matrix row contains values but no identifier; no identifier was propagated",
+                    severity=Severity.WARNING,
+                    sheet=worksheet.title,
+                    address=Coordinate(row, identifier_column).a1,
+                )
+            )
+        return tuple(diagnostics)
 
     def _iter_named_range_info(self) -> Iterator[NamedRangeInfo]:
         """Yield workbook- and worksheet-scoped defined-name metadata."""
