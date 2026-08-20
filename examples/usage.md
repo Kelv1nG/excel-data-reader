@@ -1,163 +1,407 @@
-# Usage guide
+# Usage recipes
 
-Use the most explicit workbook structure available. The reader follows this order of preference:
+Use the most explicit workbook structure available. These recipes are intentionally independent:
+copy the function that matches the workbook you have and adapt its arguments.
 
-1. a native Excel Table;
-2. a rectangular defined name;
-3. a known cell range;
-4. exact normalized header discovery;
-5. sectioned-matrix discovery for shared hierarchical headers;
-6. a sparse whole-sheet read when no table boundary is known.
+| Workbook shape | Preferred entry point |
+| --- | --- |
+| Authored Excel Table | `get_table()` |
+| Rectangular defined name | `get_named_range()` |
+| Known cell rectangle | `read_range()` |
+| Headers are known, location is not | `find_tables()` or `query_tables()` |
+| Repeated grouped column headers | `find_matrices()` and `extract_matrix()` |
+| No trustworthy boundary | `read_sheet()` |
+| Uploaded or otherwise untrusted file | `analyze_workbook_bytes()` |
 
-All extracted cells retain their original worksheet coordinates. Excel 97-2003 `.xls` and OOXML
-`.xlsx`, `.xlsm`, `.xltx`, and `.xltm` files use the same public API.
+All extracted cells retain their worksheet coordinates. Excel 97-2003 `.xls` and OOXML `.xlsx`,
+`.xlsm`, `.xltx`, and `.xltm` files use the same API except that native Excel Tables are an OOXML
+feature.
 
-## Native Excel Table
+The runnable [`api_recipes.py`](api_recipes.py) module wraps the common paths below in reusable
+functions and runs them against the checked-in example workbooks.
 
-Use an authored Excel Table when one exists because its boundaries are explicit:
+## Inspect a workbook before choosing a strategy
+
+Inventory reports authored structure without extracting table bodies:
 
 ```python
-from excel_data_reader import ExcelReader
+from pathlib import Path
 
-with ExcelReader.open("orders.xlsx") as reader:
-    table = reader.get_table("OrdersTable")
-    records = table.records()
+from excel_data_reader import ExcelReader, WorkbookInventory
+
+
+def inspect_workbook(path: str | Path) -> WorkbookInventory:
+    with ExcelReader.open(path) as reader:
+        return reader.inventory()
+
+
+inventory = inspect_workbook("orders.xlsx")
+print([sheet.name for sheet in inventory.sheets])
+print([table.name for table in inventory.native_tables])
+print([named.name for named in inventory.named_ranges])
 ```
 
-`get_table()` requires exactly one native table with that name. Native-table metadata is available
-for OOXML workbooks; legacy `.xls` files should use header, named-range, or explicit-range discovery.
-
-## Find a table by headers
-
-Use `TableQuery` for normal discovery. Required headers must appear on one row, but their physical
-order and spacing do not have to match the requested order:
+If you only need native-table candidates, list their matches directly and inspect the source
+locations before selecting one:
 
 ```python
-from excel_data_reader import ExcelReader, TableQuery
+with ExcelReader.open("orders.xlsx") as reader:
+    matches = reader.find_native_tables(sheet="Orders")
 
-query = TableQuery(
-    required_headers=("customer id", "amount"),
-    optional_headers=("invoice date", "owner"),
-    aliases={"customer id": ("client no", "account number")},
+for match in matches.matches:
+    print(match.name, match.sheet, match.range)
+```
+
+## Read workbook-authored structures
+
+Use a native Excel Table when one exists because its boundary is explicit:
+
+```python
+from excel_data_reader import ExcelReader, TableData
+
+
+def read_orders_table(path: str, table_name: str = "OrdersTable") -> TableData:
+    with ExcelReader.open(path) as reader:
+        return reader.get_table(table_name)
+
+
+orders = read_orders_table("orders.xlsx")
+for record in orders.records():
+    print(dict(record))
+```
+
+Use a rectangular defined name in the same way. Pass `sheet=` when a worksheet-scoped name or a
+multi-destination name needs disambiguation:
+
+```python
+def read_defined_inventory(path: str) -> TableData:
+    with ExcelReader.open(path) as reader:
+        return reader.get_named_range("InventoryData", sheet="Inventory")
+```
+
+Use a known rectangle when the workbook has no authored table object. `header=0` means the first
+row in the range supplies column names; `header=None` keeps every row and creates stable synthetic
+names:
+
+```python
+def read_known_report(path: str) -> TableData:
+    with ExcelReader.open(path) as reader:
+        return reader.read_range("Report", "B4:F100", header=0)
+
+
+def read_headerless_import(path: str) -> TableData:
+    with ExcelReader.open(path) as reader:
+        return reader.read_range("Raw Import", "C5:F100", header=None)
+
+
+raw = read_headerless_import("raw-import.xlsx")
+print([column.name for column in raw.columns])  # column_1, column_2, ...
+print(raw.rows[0].cells[0].address)  # original worksheet coordinate
+```
+
+`get_named_range(name, header=None)` provides the same headerless behavior for a rectangular
+defined name.
+
+## Discover a table by headers
+
+The short form is useful when all fields are required:
+
+```python
+def find_orders(path: str) -> TableData:
+    with ExcelReader.open(path) as reader:
+        match = reader.find_tables(
+            ("amount", "customer id", "invoice date"),
+            sheet="Orders",
+            allow_non_adjacent_columns=True,
+            max_blank_rows=2,
+        ).require_one()
+        return reader.extract(match)
+```
+
+Requested order becomes logical output order even when the worksheet columns are scattered.
+Header matching normalizes case, Unicode, whitespace, underscores, and hyphens, but never uses
+fuzzy similarity.
+
+Use `TableQuery` for aliases, optional fields, search bounds, location hints, and reusable body
+rules:
+
+```python
+from excel_data_reader import BodyPolicy, ExcelReader, TableQuery
+
+ORDERS_QUERY = TableQuery(
+    required_headers=("account number", "amount"),
+    optional_headers=("invoice date", "owner", "purchase order"),
+    aliases={"account number": ("customer id", "client no")},
     sheet="Orders",
-    allow_non_adjacent_columns=True,
+    within="A1:M5000",
+    near="A20",
+    body=BodyPolicy.until_blank_rows(2),
 )
 
-with ExcelReader.open("orders.xls") as reader:
-    match = reader.query_tables(query).require_one()
-    table = reader.extract(match)
+
+def query_orders(path: str) -> TableData:
+    with ExcelReader.open(path) as reader:
+        match = reader.query_tables(ORDERS_QUERY).require_one()
+        return reader.extract(match)
 ```
 
-Header matching is deterministic: Unicode and whitespace are normalized, underscores and hyphens
-act like spaces, and matching is case-insensitive. It does not use fuzzy similarity. The extracted
-logical column order follows the query even when worksheet columns are scattered.
+Alternative body boundaries are explicit:
 
-Use `reader.explain(query)` when you need scan boundaries, candidate evidence, rejection reasons,
-or help diagnosing zero or multiple matches. `require_one()` deliberately reports ambiguity rather
-than selecting an arbitrary table.
+```python
+through_last_value = TableQuery(
+    ("customer id", "amount"),
+    body=BodyPolicy.last_populated(),
+)
+
+through_known_row = TableQuery(
+    ("customer id", "amount"),
+    body=BodyPolicy.through_row(500),
+)
+```
+
+Native Excel Tables always keep their authored boundaries regardless of the query body policy.
+
+## Handle zero, one, or several matches
+
+Use `.require_one()` when anything other than one result is an error. When a caller should decide
+between candidates, retain the `MatchSet` instead:
+
+```python
+from excel_data_reader import ExcelDataReaderError
+
+
+def show_candidates(path: str, query: TableQuery) -> None:
+    with ExcelReader.open(path) as reader:
+        matches = reader.query_tables(query)
+
+    if not matches.matches:
+        print("no match", [item.code for item in matches.diagnostics])
+        return
+    if len(matches.matches) > 1:
+        for match in matches.matches:
+            print("candidate", match.sheet, match.range)
+        return
+    print("selected", matches.matches[0].sheet, matches.matches[0].range)
+
+
+def require_one_candidate(path: str, query: TableQuery):
+    with ExcelReader.open(path) as reader:
+        return reader.query_tables(query).require_one()
+
+
+show_candidates("orders.xlsx", ORDERS_QUERY)
+
+try:
+    match = require_one_candidate("orders.xlsx", ORDERS_QUERY)
+except ExcelDataReaderError as error:
+    for diagnostic in error.diagnostics:
+        print(diagnostic.code, diagnostic.sheet, diagnostic.address)
+```
+
+The library reports ambiguity instead of choosing an arbitrary candidate. Adding `sheet`,
+`within`, or `near` to the query is the deterministic way to narrow results; an equal-distance
+`near` tie remains ambiguous.
+
+## Explain why discovery did or did not match
+
+`explain()` runs the same query while retaining scan and candidate evidence:
+
+```python
+def explain_orders(path: str, query: TableQuery):
+    with ExcelReader.open(path) as reader:
+        return reader.explain(query)
+
+
+report = explain_orders("orders.xlsx", ORDERS_QUERY)
+for scan in report.scans:
+    print(scan.sheet, scan.bounds, scan.cells_considered, scan.completed)
+for candidate in report.candidates:
+    print(candidate.selected, candidate.evidence, candidate.reasons)
+```
+
+This is useful for user-facing diagnostics and for tightening a query without hiding partial or
+ambiguous matches.
+
+## Work with values and source coordinates
+
+Choose the result shape that fits the next step:
+
+```python
+table.values  # immutable tuples of typed values
+table.records()  # mappings keyed by unique logical column names
+table.rows[0].source_row  # original one-based worksheet row
+table.rows[0].cells[0].value
+table.rows[0].cells[0].address
+```
+
+For formulas, choose one of the three value modes:
+
+```python
+from excel_data_reader import ExcelReader, FormulaValue, ValueMode
+
+
+def read_formulas_and_cached_values(path: str) -> TableData:
+    with ExcelReader.open(path, value_mode=ValueMode.BOTH) as reader:
+        return reader.get_table("OrdersTable")
+
+
+table = read_formulas_and_cached_values("orders.xlsx")
+value = table.rows[0].cells[-1].value
+if isinstance(value, FormulaValue):
+    print(value.formula, value.cached)
+```
+
+`formula` returns formula text, `cached` returns Excel's last stored result, and `both` returns a
+`FormulaValue` pair. The reader does not calculate formulas.
+
+## Read a sheet without guessing a table
+
+Use a sparse sheet snapshot when neither headers nor a reliable boundary exist:
+
+```python
+from excel_data_reader import SheetData
+
+
+def read_unstructured_sheet(path: str, sheet_name: str) -> SheetData:
+    with ExcelReader.open(path) as reader:
+        return reader.read_sheet(sheet_name)
+
+
+sheet = read_unstructured_sheet("raw-import.xlsx", "Raw")
+for cell in sheet.cells:
+    print(cell.address, cell.value)
+
+dense = sheet.to_matrix(fill=None)
+```
+
+`read_sheet(..., include_styled_blanks=True)` can include blank cells that carry styles. Worksheet
+dimensions and styles describe the sheet; they are not treated as evidence that it contains one
+table.
 
 ## Extract a sectioned matrix
 
-Use `MatrixQuery` when repeated leaf headers are grouped by parent labels and multiple row sections
-share that column structure:
+Use `MatrixQuery` when row sections share grouped column headers and repeated leaf labels only
+become unique together with their parent labels:
 
 ```python
-from excel_data_reader import ExcelReader, MatrixQuery
+from excel_data_reader import MatrixData, MatrixQuery
 
-query = MatrixQuery(
+MATRIX_QUERY = MatrixQuery(
     sections=("Country Identifier", "Sector Identifier"),
     header_level_names=("group", "attribute"),
     sheet="Sectioned Matrix",
 )
 
-with ExcelReader.open("sectioned_matrix.xlsx") as reader:
-    matches = reader.find_matrices(query)
-    country = reader.extract_matrix(matches.require_section("Country Identifier"))
-    sector = reader.extract_matrix(matches.require_section("Sector Identifier"))
 
+def read_matrix_section(path: str, section: str) -> MatrixData:
+    with ExcelReader.open(path) as reader:
+        matches = reader.find_matrices(MATRIX_QUERY)
+        match = matches.require_section(section)
+        return reader.extract_matrix(match)
+
+
+country = read_matrix_section("sectioned_matrix.xlsx", "Country Identifier")
 country_long = country.long_records()
-sector_wide = sector.wide_records()
+country_wide = country.wide_records(separator="__")
 ```
 
-The example workbook contains a vertically merged country anchor and an ordinary, unmerged sector
-anchor. A merged anchor supplies its authored row span. An unmerged anchor continues until the next
-requested section or the configured `body` policy. Blank section-label cells inherit the active
-section only in the extracted result; blank row identifiers remain blank and produce a warning
-when their row contains values.
+Prefer `long_records()` for analytical stores because its schema stays stable as groups change.
+Use `wide_records()` when downstream code needs one row per identifier. Both shapes retain source
+metadata.
 
-The `MatrixQuery` parameters are:
+## Use the platform boundary
 
-- `sections`: one or more required logical section labels;
-- `header_level_names`: names used in long records, such as `group` and `attribute`;
-- `aliases`: alternate exact-normalized labels for declared sections;
-- `sheet`: optional exact worksheet name;
-- `within`: optional finite A1 search rectangle for disambiguation and scan limits;
-- `body`: `BodyPolicy` used when a section label has no vertical merge;
-- `header_rows`: optional one-based row numbers when automatic header inference is ambiguous;
-- `identifier_column`: optional one-based index or column letters when density inference ties.
-
-Prefer `long_records()` for DuckDB because it keeps a stable schema as groups change. Use
-`wide_records(separator="__")` when downstream code expects one row per identifier. Both forms
-retain source metadata; the long form retains one source cell for every value.
-
-## No headers
-
-When the data has no header row, provide a known rectangular range and set `header=None`:
+For a trusted path, the service API adds validation, stable statuses, bounded output, and a
+versioned JSON shape:
 
 ```python
-with ExcelReader.open("raw-import.xls") as reader:
-    table = reader.read_range("Raw", "C5:F100", header=None)
+from excel_data_reader import AnalysisRequest, AnalysisStatus, analyze_workbook
+
+
+def analyze_existing_file(path: str, query: TableQuery):
+    request = AnalysisRequest.find_tables(
+        query,
+        include_inventory=True,
+        include_rows=True,
+        max_output_rows=500,
+        request_id="job-42",
+    )
+    return analyze_workbook(path, request)
+
+
+response = analyze_existing_file("orders.xlsx", ORDERS_QUERY)
+if response.status is AnalysisStatus.SUCCESS:
+    print(response.tables[0].total_row_count)
+else:
+    print([(item.code, item.message) for item in response.diagnostics])
+
+json_text = response.to_json(indent=2)
 ```
 
-The generated logical names are `column_1`, `column_2`, and so on. If the workbook provides a
-rectangular defined name, use `get_named_range(name, header=None)` instead.
+Use `AnalysisRequest.inventory()` when no discovery is needed.
 
-## Read everything without guessing a table
-
-Use a sparse sheet read when neither headers nor a reliable boundary exist:
+For an upload, pass bytes or an open binary stream. The upload API safely stages and removes the
+file while applying the default untrusted-workbook policy:
 
 ```python
-with ExcelReader.open("raw-import.xlsx") as reader:
-    sheet = reader.read_sheet("Raw")
-    cells = sheet.cells
-    matrix = sheet.to_matrix()
+from excel_data_reader import AnalysisControl, analyze_workbook_bytes
+
+
+def analyze_upload(stream, filename: str, query: TableQuery):
+    request = AnalysisRequest.find_tables(
+        query,
+        include_rows=True,
+        max_output_rows=500,
+    )
+    return analyze_workbook_bytes(
+        stream,
+        filename,
+        request,
+        control=AnalysisControl(timeout_seconds=10),
+    )
+
+
+with open("customer-upload.xlsx", "rb") as stream:
+    response = analyze_upload(stream, "customer-upload.xlsx", ORDERS_QUERY)
 ```
 
-`read_sheet()` returns populated cells with coordinates. `to_matrix()` is available when a dense
-rectangular representation is more convenient. Worksheet dimensions are never treated as proof
-that the entire sheet is one table.
+Cancellation and timeouts are cooperative. Use an isolated, resource-limited worker when a host
+requires a hard execution limit.
 
-## Uploaded or untrusted workbooks
+## Legacy `.xls`
 
-Use the platform service rather than opening an uploaded file directly:
+The same discovery, explicit-range, named-range, sparse-sheet, and service recipes work for real
+Excel 97-2003 files:
 
 ```python
-from excel_data_reader import AnalysisRequest, TableQuery, analyze_workbook_bytes
-
-request = AnalysisRequest.find_tables(
-    TableQuery(("customer id", "amount")),
-    include_rows=True,
-    max_output_rows=500,
-)
-response = analyze_workbook_bytes(uploaded_stream, original_filename, request)
+with ExcelReader.open("legacy-orders.xls") as reader:
+    print(reader.workbook_format)
+    for warning in reader.diagnostics:
+        print(warning.code, warning.message)
+    table = reader.extract(
+        reader.find_tables(
+            ("customer id", "invoice date", "amount"),
+            sheet="Legacy Orders",
+        ).require_one()
+    )
 ```
 
-The service applies format, size, archive, and staging policies and returns stable statuses such as
-`success`, `no_match`, `ambiguous`, `rejected`, `cancelled`, and `timeout`. It supports both `.xls`
-and OOXML uploads by default.
-
-For legacy `.xls`, formula cells expose their stored calculation results. Unsupported BIFF
-features produce a `LEGACY_XLS_LIMITED` warning; table values and header-based extraction remain
-available.
+Legacy formula source text and native Excel Table metadata are unavailable, so use stored values
+and the other deterministic entry points.
 
 ## Command line
 
 ```powershell
-excel-data-reader inspect examples/workbooks/legacy_scattered.xls
+excel-data-reader inspect examples/workbooks/native_table.xlsx
+excel-data-reader inspect examples/workbooks/legacy_scattered.xls --json
 
-excel-data-reader find examples/workbooks/legacy_scattered.xls `
-  --headers "customer id,invoice date,amount" `
-  --sheet "Legacy Orders" `
+excel-data-reader find examples/workbooks/scattered_headers.xlsx `
+  --headers "customer id,amount" `
+  --optional "invoice date,owner" `
+  --alias "customer id=client no|account number" `
+  --sheet "Scattered Orders" `
+  --within A1:G20 `
+  --near A4 `
   --json
 ```
 
@@ -167,6 +411,7 @@ From the repository root:
 
 ```powershell
 uv sync --all-groups
+uv run python examples/api_recipes.py
 uv run python examples/01_native_table.py
 uv run python examples/02_scattered_headers.py
 uv run python examples/03_named_and_headerless.py
@@ -177,4 +422,4 @@ uv run python examples/07_legacy_xls.py
 uv run python examples/08_sectioned_matrix.py
 ```
 
-See `README.md` in this directory for the workbook paired with each script.
+See [`README.md`](README.md) for the workbook paired with each focused script.

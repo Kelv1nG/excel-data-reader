@@ -302,12 +302,16 @@ demonstrating:
 - the versioned platform service with bounded uploaded-byte handling.
 - direct Excel 97-2003 `.xls` discovery through the legacy adapter.
 - hierarchical matrix extraction with merged or unmerged row-section anchors.
+- reusable, function-oriented recipes spanning the main public API entry points.
 
-Start with [`examples/README.md`](examples/README.md), or run:
+Start with the [`examples usage recipes`](examples/usage.md), or run the recipe collection:
 
 ```powershell
-uv run python examples/01_native_table.py
+uv run python examples/api_recipes.py
 ```
+
+The smaller numbered scripts remain useful when you want one focused behavior and its paired
+workbook; see [`examples/README.md`](examples/README.md).
 
 The manifest-driven seed acceptance corpus lives under `tests/acceptance/`. A private production
 corpus can be included locally through `EXCEL_DATA_READER_ACCEPTANCE_MANIFEST` without committing

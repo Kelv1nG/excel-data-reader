@@ -5,13 +5,16 @@ These examples pair small Python programs with real `.xlsx` and `.xls` workbooks
 recreates the four original table-oriented fixtures with OpenPyXL and xlwt; the sectioned-matrix
 fixture is retained as a checked-in layout example.
 
-For a short decision guide covering native tables, header discovery, headerless ranges, sparse
-reads, uploads, and legacy `.xls`, see [`usage.md`](usage.md).
+For a function-oriented recipe guide covering most public entry points, see [`usage.md`](usage.md).
+The runnable [`api_recipes.py`](api_recipes.py) module contains parameterized versions of those
+recipes, so they can be copied independently instead of treating each numbered script as the only
+way to use that feature.
 
 From the repository root:
 
 ```powershell
 uv sync --all-groups
+uv run python examples/api_recipes.py
 uv run python examples/01_native_table.py
 uv run python examples/02_scattered_headers.py
 uv run python examples/03_named_and_headerless.py
@@ -145,3 +148,18 @@ sector label is an ordinary cell whose following blank label cells inherit the s
 blank matrix rows. Parent header merges resolve repeated `attr1`, `attr2`, and `attr3` labels into
 unique paths such as `("group2", "attr1")`. The script prints both normalized long records and
 collision-checked wide records.
+
+## Reusable API recipes
+
+`api_recipes.py` complements the focused numbered examples with reusable functions for:
+
+- workbook inventory;
+- native tables, defined names, explicit ranges, and sparse sheets;
+- all-match inspection and exactly-one structured discovery;
+- discovery reports;
+- long and wide matrix records;
+- trusted-path and uploaded-stream service calls; and
+- stable typed JSON serialization.
+
+Its `main()` function runs a representative subset and prints one JSON summary, while every
+recipe can also be imported on its own.
