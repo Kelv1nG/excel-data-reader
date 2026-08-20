@@ -89,6 +89,42 @@ rectangle is a table.
 Explicit and named ranges may be read with `header=None`. Columns then receive stable synthetic
 names (`column_1`, `column_2`, and so on) while retaining their physical column numbers.
 
+## Sectioned matrices
+
+`MatrixQuery` discovers repeated row sections beneath a shared hierarchical column header. This
+contract is separate from `TableQuery`: ordinary table discovery continues to require all logical
+headers on one row, while a matrix column is identified by an ordered path such as
+`("group1", "attr1")` assembled from multiple header levels.
+
+A query declares one or more exact normalized section labels and names for the column-header
+levels. Section aliases follow the same deterministic normalization and ownership rules as table
+header aliases. Optional `within`, `header_rows`, and `identifier_column` hints can constrain
+discovery, but physical columns and rows are inferred when those hints are absent.
+
+Horizontal merged cells are structural evidence for a parent header's column span. When parent
+headers are not merged, a non-empty label applies to following value columns until the next label
+on that header row. The closest populated row above the first requested section supplies leaf
+headers. Every value column must resolve one label and source coordinate for every declared header
+level. Repeated leaf labels are valid when their complete header paths differ.
+
+A section label may be vertically merged or stored in one ordinary cell. A vertical merge supplies
+an authored row boundary. Otherwise, the label is a semantic anchor: following rows remain in the
+section until the next requested section anchor, the configured blank-row boundary, an explicit
+bottom row, or the last populated selected row. Section labels are propagated only in the result;
+the workbook is never modified. Individual row identifiers are never propagated into blank cells.
+
+When no identifier-column override is supplied, discovery considers columns between the section
+anchor and the first value column. It selects the uniquely densest populated candidate across the
+section rows. A tie remains explicit ambiguity. Rows containing matrix values without an
+identifier produce a stable warning rather than inheriting the preceding identifier.
+
+`ExcelReader.find_matrices()` returns one `MatrixMatch` per discovered section anchor plus stable
+missing, ambiguity, and malformed-layout diagnostics. `MatrixMatchSet.require_section()` requires
+exactly one match for a logical section. `ExcelReader.extract_matrix()` returns source-addressed
+matrix values. `MatrixData.long_records()` produces the normalized, schema-stable representation
+recommended for analytical databases; `MatrixData.wide_records()` provides one record per
+identifier with collision-checked flattened header paths.
+
 ## Results and ambiguity
 
 Discovery returns zero or more immutable `TableMatch` objects. `MatchSet.require_one()` raises a
@@ -184,5 +220,6 @@ production workbooks without making those files part of the package or repositor
 
 ## Deferred behavior
 
-The library does not implement fuzzy headers, automatic dense-region detection, multi-row
-headers, ordinal compression of unrelated columns, joins, or label/value form extraction.
+The library does not implement fuzzy headers, automatic dense-region detection, arbitrary
+multi-row table headers outside the explicit sectioned-matrix contract, ordinal compression of
+unrelated columns, joins, or label/value form extraction.
