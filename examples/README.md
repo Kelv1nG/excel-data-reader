@@ -1,8 +1,9 @@
 # Examples
 
 These examples pair small Python programs with real `.xlsx` and `.xls` workbooks under
-`workbooks/`. The workbooks are checked in so each script runs immediately, and
-`build_workbooks.py` recreates them with OpenPyXL and xlwt.
+`workbooks/`. The workbooks are checked in so each script runs immediately. `build_workbooks.py`
+recreates the four original table-oriented fixtures with OpenPyXL and xlwt; the sectioned-matrix
+fixture is retained as a checked-in layout example.
 
 For a short decision guide covering native tables, header discovery, headerless ranges, sparse
 reads, uploads, and legacy `.xls`, see [`usage.md`](usage.md).
@@ -18,6 +19,7 @@ uv run python examples/04_table_query.py
 uv run python examples/05_explain_query.py
 uv run python examples/06_platform_upload.py
 uv run python examples/07_legacy_xls.py
+uv run python examples/08_sectioned_matrix.py
 ```
 
 Rebuild all workbooks:
@@ -120,3 +122,26 @@ Workbook: `workbooks/legacy_scattered.xls`
 `07_legacy_xls.py` opens a genuine BIFF8 `.xls` file, displays the explicit legacy-compatibility
 warning, finds non-adjacent header columns, and extracts source-addressed values through the same
 `ExcelReader` API used for OOXML workbooks.
+
+## 8. Sectioned matrix
+
+Workbook: `workbooks/sectioned_matrix.xlsx`
+
+`08_sectioned_matrix.py` discovers country and sector row sections beneath shared grouped headers:
+
+```python
+query = MatrixQuery(
+    sections=("Country Identifier", "Sector Identifier"),
+    header_level_names=("group", "attribute"),
+    sheet="Sectioned Matrix",
+)
+
+matches = reader.find_matrices(query)
+country = reader.extract_matrix(matches.require_section("Country Identifier"))
+```
+
+The country label is vertically merged and therefore supplies an authored body boundary. The
+sector label is an ordinary cell whose following blank label cells inherit the section until two
+blank matrix rows. Parent header merges resolve repeated `attr1`, `attr2`, and `attr3` labels into
+unique paths such as `("group2", "attr1")`. The script prints both normalized long records and
+collision-checked wide records.

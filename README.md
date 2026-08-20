@@ -163,6 +163,56 @@ Header-inferred tables support three body policies:
 
 Native Excel Tables always retain their authored boundaries.
 
+## Sectioned matrices with repeated grouped headers
+
+Use `MatrixQuery` when row sections share multi-level column headers and repeated leaf labels only
+become unique when combined with their parent group. This is separate from `TableQuery`, whose
+headers intentionally remain on one row:
+
+```python
+from excel_data_reader import ExcelReader, MatrixQuery
+
+query = MatrixQuery(
+    sections=("Country Identifier", "Sector Identifier"),
+    header_level_names=("group", "attribute"),
+    sheet="Sectioned Matrix",
+)
+
+with ExcelReader.open("sectioned_matrix.xlsx") as workbook:
+    matches = workbook.find_matrices(query)
+    country_match = matches.require_section("Country Identifier")
+    country = workbook.extract_matrix(country_match)
+
+long_records = country.long_records()
+wide_records = country.wide_records()
+```
+
+The reader uses horizontally merged parent headers as authored column spans. Unmerged parent
+labels are filled forward only until the next label on that header row. A vertically merged
+section label supplies an exact row boundary; an ordinary section-label cell remains active until
+the next requested section, the configured body boundary, or the last populated selected row.
+Individual identifiers are never filled down into blank cells.
+
+`MatrixQuery` arguments are:
+
+- `sections`: required logical section labels matched with exact normalization;
+- `header_level_names`: output field names for the hierarchical header levels; its length also
+  declares the number of levels;
+- `aliases`: accepted alternate labels keyed by a declared logical section;
+- `sheet`: optional exact worksheet scope;
+- `within`: optional finite A1 search rectangle;
+- `body`: fallback boundary policy for unmerged section labels;
+- `header_rows`: optional one-based row override, with one row per header level;
+- `identifier_column`: optional one-based column index or Excel letters such as `"D"`.
+
+`long_records()` returns one analytical record per matrix value, including section, identifier,
+named header levels, value, and source coordinates. This stable shape is recommended for DuckDB
+and similar analytical stores. `wide_records()` returns one record per identifier and flattens
+header paths with `__`, rejecting collisions rather than silently overwriting a column.
+
+See `examples/08_sectioned_matrix.py` and its paired workbook for merged and unmerged section
+anchors under the same grouped header.
+
 ## Explainable discovery
 
 Use `explain()` when a platform needs to show why a table matched—or why it did not:
@@ -251,6 +301,7 @@ demonstrating:
 - explainable discovery reports and command-line inspection.
 - the versioned platform service with bounded uploaded-byte handling.
 - direct Excel 97-2003 `.xls` discovery through the legacy adapter.
+- hierarchical matrix extraction with merged or unmerged row-section anchors.
 
 Start with [`examples/README.md`](examples/README.md), or run:
 
