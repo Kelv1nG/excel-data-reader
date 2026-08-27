@@ -187,6 +187,7 @@ The matrix examples are split into:
 - native tables, defined names, explicit ranges, and sparse sheets;
 - all-match inspection and exactly-one structured discovery;
 - discovery reports;
+- blank-separated row blocks with shared explicit headers;
 - long and wide matrix records;
 - trusted-path and uploaded-stream service calls; and
 - stable typed JSON serialization.

@@ -10,12 +10,15 @@ from excel_data_reader import (
     AnalysisControl,
     AnalysisRequest,
     AnalysisResponse,
+    BlankRowSeparator,
     BodyPolicy,
     DiscoveryReport,
     ExcelReader,
     MatchSet,
     MatrixData,
     MatrixQuery,
+    RowBlockData,
+    RowBlockQuery,
     SheetData,
     TableData,
     TableQuery,
@@ -124,6 +127,38 @@ def extract_matrix_section(
     with ExcelReader.open(path) as reader:
         match = reader.find_matrices(query).require_section(section)
         return reader.extract_matrix(match)
+
+
+def extract_row_blocks(
+    path: str | Path,
+    *,
+    sheet: str,
+    header_range: str,
+    scan_range: str,
+    min_separator_rows: int = 2,
+    expected_count: int | None = None,
+) -> tuple[RowBlockData, ...]:
+    """Extract ordered unlabeled row blocks beneath one shared header row.
+
+    Args:
+        path: Workbook path to open.
+        sheet: Exact worksheet containing the shared headers and row blocks.
+        header_range: Finite one-row range supplying authored headers.
+        scan_range: Finite data rectangle inspected for blank-separated blocks.
+        min_separator_rows: Consecutive blank rows required to split blocks.
+        expected_count: Optional exact block count validated before extraction.
+    """
+
+    query = RowBlockQuery(
+        sheet=sheet,
+        header_range=header_range,
+        scan_range=scan_range,
+        separator=BlankRowSeparator(min_rows=min_separator_rows),
+    )
+    with ExcelReader.open(path) as reader:
+        result = reader.find_row_blocks(query)
+        matches = result.matches if expected_count is None else result.require_count(expected_count)
+        return tuple(reader.extract_row_block(match) for match in matches)
 
 
 def analyze_trusted_file(

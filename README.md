@@ -163,6 +163,56 @@ Header-inferred tables support three body policies:
 
 Native Excel Tables always retain their authored boundaries.
 
+## Blank-separated row blocks with shared headers
+
+Use `RowBlockQuery` when several unlabeled row sections share one explicitly located header row
+and are separated by predictable runs of empty rows. This is intentionally separate from
+`TableQuery` and `MatrixQuery`: blocks receive physical ordinals, not invented semantic names.
+
+```python
+from excel_data_reader import BlankRowSeparator, ExcelReader, RowBlockQuery
+
+query = RowBlockQuery(
+    sheet="Report",
+    header_range="B6:D6",
+    scan_range="A8:D5000",
+    separator=BlankRowSeparator(min_rows=2),
+)
+
+with ExcelReader.open("report.xlsx") as workbook:
+    matches = workbook.find_row_blocks(query)
+    first, second, third = matches.require_count(3)
+    blocks = tuple(
+        workbook.extract_row_block(match)
+        for match in (first, second, third)
+    )
+
+first_records = blocks[0].records()
+```
+
+The header range may cover fewer columns than the scan range. In this example, the unnamed column
+A receives the stable name `column_1`, while B through D retain their authored headers. Every
+extracted block exposes `columns`, `values`, `rows`, and `records()` and retains original worksheet
+coordinates.
+
+A row is blank only when every cell across the scan range's columns has no stored value. Runs of
+at least `min_rows` split blocks and are excluded. Shorter internal blank runs remain inside the
+surrounding block; leading and trailing blanks are excluded. A populated final row in
+`scan_range` produces `ROW_BLOCK_SCAN_BOUNDARY_REACHED`, because more data may exist below the
+caller-supplied safety boundary.
+
+When an application wants tab names, validate the count before assigning them positionally:
+
+```python
+tab_names = ("tab1", "tab2", "tab3")
+with ExcelReader.open("report.xlsx") as workbook:
+    matches = workbook.find_row_blocks(query).require_count(len(tab_names))
+    tabs = {
+        name: workbook.extract_row_block(match)
+        for name, match in zip(tab_names, matches, strict=True)
+    }
+```
+
 ## Sectioned matrices with repeated grouped headers
 
 Use `MatrixQuery` when row sections share multi-level column headers and repeated leaf labels only
@@ -295,6 +345,7 @@ demonstrating:
 - native Excel Table extraction;
 - normalized header discovery across non-adjacent columns;
 - blank-row tolerance;
+- explicit blank-separated row-block discovery with shared headers;
 - rectangular defined names;
 - headerless ranges and sparse sheet reads;
 - aliases, optional headers, location hints, and body policies;

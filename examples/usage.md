@@ -278,6 +278,43 @@ dense = sheet.to_matrix(fill=None)
 dimensions and styles describe the sheet; they are not treated as evidence that it contains one
 table.
 
+## Extract blank-separated row blocks
+
+Use an explicit shared header and finite scan window when a report contains multiple unlabeled
+row blocks separated by blank runs:
+
+```python
+from excel_data_reader import (
+    BlankRowSeparator,
+    ExcelReader,
+    RowBlockData,
+    RowBlockQuery,
+)
+
+
+def read_report_blocks(path: str) -> tuple[RowBlockData, ...]:
+    query = RowBlockQuery(
+        sheet="Report",
+        header_range="B6:D6",
+        scan_range="A8:D5000",
+        separator=BlankRowSeparator(min_rows=2),
+    )
+    with ExcelReader.open(path) as reader:
+        matches = reader.find_row_blocks(query).require_count(3)
+        return tuple(reader.extract_row_block(match) for match in matches)
+
+
+blocks = read_report_blocks("report.xlsx")
+print(blocks[0].match.ordinal, blocks[0].match.range)
+print(blocks[0].columns)
+print(blocks[0].records())
+```
+
+Column A receives `column_1` because the authored header range begins in column B. Blank runs of
+two or more rows separate blocks; a single internal blank row remains in the extracted block.
+Blocks have no semantic workbook identity, so assign application tab names only after validating
+the discovered count with `require_count()`.
+
 ## Extract a sectioned matrix
 
 Use `MatrixQuery` when row sections share grouped column headers and repeated leaf labels only
