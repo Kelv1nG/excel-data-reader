@@ -155,6 +155,59 @@ class TableQuery:
 
 
 @dataclass(frozen=True)
+class BlankRowSeparator:
+    """Declare the consecutive blank-row run that separates row blocks.
+
+    Attributes:
+        min_rows: Minimum number of consecutive blank rows required to split two
+            populated row blocks.
+    """
+
+    min_rows: int = 2
+
+    def __post_init__(self) -> None:
+        """Reject non-positive or non-integer separator lengths."""
+
+        if isinstance(self.min_rows, bool) or not isinstance(self.min_rows, int):
+            raise TypeError("min_rows must be an integer")
+        if self.min_rows < 1:
+            raise ValueError("min_rows must be at least one")
+
+
+@dataclass(frozen=True)
+class RowBlockQuery:
+    """Describe explicit shared headers and a finite blank-separated data scan.
+
+    Attributes:
+        sheet: Exact worksheet name containing the header and data ranges.
+        header_range: Finite one-row A1 range supplying authored column names.
+        scan_range: Finite A1 rectangle whose populated rows may form blocks.
+        separator: Blank-row run required to separate adjacent blocks.
+    """
+
+    sheet: str
+    header_range: Rectangle | str
+    scan_range: Rectangle | str
+    separator: BlankRowSeparator = field(default_factory=BlankRowSeparator)
+
+    def __post_init__(self) -> None:
+        """Reject empty sheet or range values and invalid separator objects."""
+
+        if not isinstance(self.sheet, str) or not self.sheet:
+            raise ValueError("sheet must be a non-empty string")
+        for name, value in (
+            ("header_range", self.header_range),
+            ("scan_range", self.scan_range),
+        ):
+            if not isinstance(value, (Rectangle, str)):
+                raise TypeError(f"{name} must be a Rectangle or finite A1 range")
+            if isinstance(value, str) and not value.strip():
+                raise ValueError(f"{name} must not be empty")
+        if not isinstance(self.separator, BlankRowSeparator):
+            raise TypeError("separator must be a BlankRowSeparator")
+
+
+@dataclass(frozen=True)
 class MatrixQuery:
     """A deterministic query for row-sectioned matrices with hierarchical headers.
 
@@ -559,6 +612,124 @@ class TableData:
                         if self.match.header_row is not None
                         else None
                     ),
+                )
+            )
+        return tuple(
+            MappingProxyType(dict(zip(names, row.values, strict=True))) for row in self.rows
+        )
+
+
+@dataclass(frozen=True)
+class RowBlockMatch:
+    """One ordinal blank-separated row block with shared column metadata.
+
+    Attributes:
+        ordinal: Stable one-based physical order within the query scan.
+        sheet: Worksheet containing the block.
+        header_range: One-row range supplying authored shared headers.
+        data_bounds: Inclusive physical bounds of this block's data rows.
+        columns: Shared physical and logical column metadata.
+        separator_after: Blank rectangle separating this block from the next one.
+        diagnostics: Warnings attached specifically to this block.
+    """
+
+    ordinal: int
+    sheet: str
+    header_range: Rectangle
+    data_bounds: Rectangle
+    columns: tuple[ColumnInfo, ...]
+    separator_after: Rectangle | None = None
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    @property
+    def range(self) -> str:
+        """Return the block's data rectangle in A1 notation."""
+
+        return self.data_bounds.a1
+
+
+@dataclass(frozen=True)
+class RowBlockMatchSet:
+    """Ordered row-block matches plus discovery diagnostics.
+
+    Attributes:
+        matches: Row blocks in physical top-to-bottom order.
+        diagnostics: Stable discovery warnings or errors.
+    """
+
+    matches: tuple[RowBlockMatch, ...]
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    def require_count(self, expected: int) -> tuple[RowBlockMatch, ...]:
+        """Return all matches when their count equals the caller's expectation.
+
+        Args:
+            expected: Required non-negative number of discovered row blocks.
+        """
+
+        if isinstance(expected, bool) or not isinstance(expected, int):
+            raise TypeError("expected must be an integer")
+        if expected < 0:
+            raise ValueError("expected must not be negative")
+        if len(self.matches) == expected:
+            return self.matches
+        locations = ", ".join(f"{match.sheet}!{match.range}" for match in self.matches)
+        message = f"expected {expected} row blocks but discovered {len(self.matches)}"
+        if locations:
+            message += f": {locations}"
+        sheet = self.matches[0].sheet if self.matches else None
+        raise ExcelDataReaderError(
+            (
+                Diagnostic(
+                    DiagnosticCode.ROW_BLOCK_COUNT_MISMATCH,
+                    message,
+                    sheet=sheet,
+                ),
+                *self.diagnostics,
+            )
+        )
+
+
+@dataclass(frozen=True)
+class RowBlockData:
+    """Coordinate-preserving rows extracted from one row-block match.
+
+    Attributes:
+        match: Discovered row block and its shared columns.
+        rows: Physical data rows, including short internal blank runs.
+    """
+
+    match: RowBlockMatch
+    rows: tuple[DataRow, ...]
+
+    @property
+    def columns(self) -> tuple[ColumnInfo, ...]:
+        """Return the shared logical columns applied to this block."""
+
+        return self.match.columns
+
+    @property
+    def values(self) -> tuple[tuple[Any, ...], ...]:
+        """Return block values in physical row and column order."""
+
+        return tuple(row.values for row in self.rows)
+
+    def records(self) -> tuple[Mapping[str, Any], ...]:
+        """Return immutable name-to-value rows when column names are unique."""
+
+        names = tuple(column.name for column in self.columns)
+        normalized = tuple(normalize_header(name) for name in names)
+        duplicates = sorted({name for name in normalized if normalized.count(name) > 1})
+        if duplicates:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.DUPLICATE_HEADER,
+                    "normalized column names are not unique: " + ", ".join(duplicates),
+                    sheet=self.match.sheet,
+                    address=Coordinate(
+                        self.match.header_range.top,
+                        self.match.header_range.left,
+                    ).a1,
                 )
             )
         return tuple(

@@ -46,6 +46,10 @@ from excel_data_reader.model import (
     NativeTableInfo,
     RangeReference,
     Rectangle,
+    RowBlockData,
+    RowBlockMatch,
+    RowBlockMatchSet,
+    RowBlockQuery,
     SheetData,
     SheetInfo,
     SheetScan,
@@ -527,6 +531,186 @@ class ExcelReader:
         result = self._query_tables(query, trace=trace)
         near = self._coerce_query_coordinate(query.near, sheet=query.sheet)
         return self._finalize_discovery_report(query, result, trace, near)
+
+    def find_row_blocks(self, query: RowBlockQuery) -> RowBlockMatchSet:
+        """Discover ordered populated row blocks separated by declared blank runs.
+
+        Args:
+            query: Explicit shared-header, scan-range, and separator declaration.
+        """
+
+        self._require_open()
+        worksheet = self._sheet(query.sheet)
+        header_bounds = (
+            query.header_range
+            if isinstance(query.header_range, Rectangle)
+            else self._parse_rectangle(query.header_range, sheet=query.sheet)
+        )
+        scan_bounds = (
+            query.scan_range
+            if isinstance(query.scan_range, Rectangle)
+            else self._parse_rectangle(query.scan_range, sheet=query.sheet)
+        )
+        if header_bounds.height != 1:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_ROW_BLOCK_QUERY,
+                    "header_range must contain exactly one worksheet row",
+                    sheet=query.sheet,
+                    address=header_bounds.a1,
+                )
+            )
+        if header_bounds.bottom >= scan_bounds.top:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_ROW_BLOCK_QUERY,
+                    "header_range must lie entirely above scan_range",
+                    sheet=query.sheet,
+                    address=scan_bounds.a1,
+                )
+            )
+        if not (
+            scan_bounds.left <= header_bounds.left and header_bounds.right <= scan_bounds.right
+        ):
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_ROW_BLOCK_QUERY,
+                    "header_range columns must lie inside scan_range columns",
+                    sheet=query.sheet,
+                    address=header_bounds.a1,
+                )
+            )
+        self._enforce_scan_limit(worksheet, bounds=scan_bounds)
+
+        columns = tuple(
+            self._row_block_column(
+                worksheet,
+                header_bounds,
+                source_column,
+                position,
+            )
+            for position, source_column in enumerate(
+                range(scan_bounds.left, scan_bounds.right + 1),
+                start=1,
+            )
+        )
+        populated_rows: list[int] = []
+        for row in range(scan_bounds.top, scan_bounds.bottom + 1):
+            self._checkpoint()
+            if any(
+                worksheet.cell(row, column).value is not None
+                for column in range(scan_bounds.left, scan_bounds.right + 1)
+            ):
+                populated_rows.append(row)
+
+        if not populated_rows:
+            return RowBlockMatchSet(
+                (),
+                (
+                    Diagnostic(
+                        DiagnosticCode.ROW_BLOCK_NOT_FOUND,
+                        "scan_range contained no populated row blocks",
+                        sheet=query.sheet,
+                        address=scan_bounds.a1,
+                    ),
+                ),
+            )
+
+        segments: list[tuple[int, int, Rectangle | None]] = []
+        block_start = populated_rows[0]
+        previous = populated_rows[0]
+        for row in populated_rows[1:]:
+            blank_count = row - previous - 1
+            if blank_count >= query.separator.min_rows:
+                segments.append(
+                    (
+                        block_start,
+                        previous,
+                        Rectangle(
+                            previous + 1,
+                            scan_bounds.left,
+                            row - 1,
+                            scan_bounds.right,
+                        ),
+                    )
+                )
+                block_start = row
+            previous = row
+        segments.append((block_start, previous, None))
+
+        diagnostics: list[Diagnostic] = []
+        if len(segments) > self.max_candidates:
+            diagnostics.append(
+                Diagnostic(
+                    DiagnosticCode.SCAN_LIMIT_EXCEEDED,
+                    f"row-block candidate limit of {self.max_candidates} was reached",
+                    sheet=query.sheet,
+                    address=scan_bounds.a1,
+                )
+            )
+        selected_segments = segments[: self.max_candidates]
+        edge_warning = None
+        if populated_rows[-1] == scan_bounds.bottom:
+            edge_warning = Diagnostic(
+                DiagnosticCode.ROW_BLOCK_SCAN_BOUNDARY_REACHED,
+                "scan_range ended on a populated row; the final row block may be truncated",
+                severity=Severity.WARNING,
+                sheet=query.sheet,
+                address=scan_bounds.a1,
+            )
+            diagnostics.append(edge_warning)
+
+        matches: list[RowBlockMatch] = []
+        for ordinal, (top, bottom, separator_after) in enumerate(
+            selected_segments,
+            start=1,
+        ):
+            match_diagnostics = (
+                (edge_warning,) if edge_warning is not None and bottom == populated_rows[-1] else ()
+            )
+            matches.append(
+                RowBlockMatch(
+                    ordinal=ordinal,
+                    sheet=query.sheet,
+                    header_range=header_bounds,
+                    data_bounds=Rectangle(
+                        top,
+                        scan_bounds.left,
+                        bottom,
+                        scan_bounds.right,
+                    ),
+                    columns=columns,
+                    separator_after=separator_after,
+                    diagnostics=match_diagnostics,
+                )
+            )
+        return RowBlockMatchSet(tuple(matches), tuple(diagnostics))
+
+    def extract_row_block(self, match: RowBlockMatch) -> RowBlockData:
+        """Extract coordinate-preserving rows for one discovered row block.
+
+        Args:
+            match: Discovered row block with shared physical column metadata.
+        """
+
+        worksheet = self._sheet(match.sheet)
+        hidden_rows = self._hidden_rows(worksheet)
+        hidden_columns = self._hidden_columns(worksheet)
+        rows: list[DataRow] = []
+        for row in range(match.data_bounds.top, match.data_bounds.bottom + 1):
+            self._checkpoint()
+            cells = tuple(
+                self._cell_data(
+                    worksheet,
+                    row,
+                    column.source_column,
+                    hidden_rows=hidden_rows,
+                    hidden_columns=hidden_columns,
+                )
+                for column in match.columns
+            )
+            rows.append(DataRow(row, cells))
+        return RowBlockData(match, tuple(rows))
 
     def find_matrices(self, query: MatrixQuery) -> MatrixMatchSet:
         """Discover row sections beneath shared hierarchical column headers.
@@ -1245,6 +1429,33 @@ class ExcelReader:
             confidence=Confidence.STRUCTURAL,
             header_row=header_row,
             name=name,
+        )
+
+    def _row_block_column(
+        self,
+        worksheet: Worksheet,
+        header_bounds: Rectangle,
+        source_column: int,
+        position: int,
+    ) -> ColumnInfo:
+        """Build shared column metadata for one row-block scan column.
+
+        Args:
+            worksheet: Worksheet containing the shared header row.
+            header_bounds: Explicit one-row range supplying authored headers.
+            source_column: One-based physical scan column to describe.
+            position: One-based logical position used for synthetic names.
+        """
+
+        inside_header = header_bounds.left <= source_column <= header_bounds.right
+        raw = worksheet.cell(header_bounds.top, source_column).value if inside_header else None
+        return ColumnInfo(
+            name=self._column_name(raw, position),
+            source_column=source_column,
+            raw_header=raw,
+            header_coordinate=(
+                Coordinate(header_bounds.top, source_column) if inside_header else None
+            ),
         )
 
     def _table_match(self, worksheet: Worksheet, table: Table) -> TableMatch:
