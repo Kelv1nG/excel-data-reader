@@ -89,6 +89,37 @@ rectangle is a table.
 Explicit and named ranges may be read with `header=None`. Columns then receive stable synthetic
 names (`column_1`, `column_2`, and so on) while retaining their physical column numbers.
 
+## Blank-separated row blocks
+
+`RowBlockQuery` discovers ordered rectangular row blocks that share one explicitly located header
+row but have no workbook-authored section labels. This contract is separate from `TableQuery` and
+`MatrixQuery`: row-block discovery does not infer semantic section identities and does not search
+for headers. The caller supplies an exact worksheet, a finite one-row `header_range`, a finite
+`scan_range` below it, and a `BlankRowSeparator` policy.
+
+The header range's columns must lie inside the scan range's columns. Columns in the scan range but
+outside the header range receive stable synthetic names, allowing a layout such as headers in
+`B6:D6` and an unnamed row-label column in `A8:A5000`. Blank cells inside the declared header range
+also receive synthetic names. Authored and synthetic columns retain their physical coordinates.
+
+A scan row is populated when at least one cell across the scan range's columns has a stored value.
+Styles and worksheet dimensions are not row-block evidence. A run containing at least
+`BlankRowSeparator.min_rows` consecutive unpopulated rows separates adjacent blocks. Separator
+rows, leading blank rows, and trailing blank rows are excluded. Shorter internal blank runs remain
+inside a block and are returned during extraction.
+
+`ExcelReader.find_row_blocks()` returns `RowBlockMatch` objects in physical top-to-bottom order.
+Each match has a stable one-based ordinal, shared column metadata, exact data bounds, and the blank
+separator following it when another block exists. `RowBlockMatchSet.require_count()` validates an
+expected structural count before callers assign positional application names such as tab labels.
+The reader never invents semantic names for unlabeled blocks.
+
+`ExcelReader.extract_row_block()` returns coordinate-preserving `RowBlockData`. Its `values` and
+`records()` interfaces mirror ordinary table data, including the requirement that normalized
+column names be unique before mapping records are produced. Discovery obeys `max_scan_cells` and
+`max_candidates`. A populated final scan row produces a stable warning because the explicit scan
+range may have truncated the last block.
+
 ## Sectioned matrices
 
 `MatrixQuery` discovers repeated row sections beneath a shared hierarchical column header. This
