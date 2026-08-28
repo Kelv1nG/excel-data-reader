@@ -95,12 +95,22 @@ names (`column_1`, `column_2`, and so on) while retaining their physical column 
 row but have no workbook-authored section labels. This contract is separate from `TableQuery` and
 `MatrixQuery`: row-block discovery does not infer semantic section identities and does not search
 for headers. The caller supplies an exact worksheet, a finite one-row `header_range`, a finite
-`scan_range` below it, and a `BlankRowSeparator` policy.
+`scan_range` below it, and a `BlankRowSeparator` policy. An optional positive `max_blocks` limits
+discovery to the first requested number of physical blocks. This prefix limit is independent of
+the finite scan range, which remains the spatial and resource-safety boundary.
+
+An optional `column_names` mapping assigns caller-authored logical names by physical Excel column
+letters. Keys are case-insensitive column letters and must identify columns inside `scan_range`;
+values must be non-empty strings. An explicit name takes precedence over an authored or synthetic
+output name, while `ColumnInfo.raw_header`, `header_coordinate`, and `source_column` continue to
+preserve the workbook source. `ColumnInfo.requested_header` records the explicit logical name.
 
 The header range's columns must lie inside the scan range's columns. Columns in the scan range but
 outside the header range receive stable synthetic names, allowing a layout such as headers in
 `B6:D6` and an unnamed row-label column in `A8:A5000`. Blank cells inside the declared header range
-also receive synthetic names. Authored and synthetic columns retain their physical coordinates.
+also receive synthetic names. Authored, synthetic, and explicitly named columns retain their
+physical coordinates. Without an explicit name, the reader never invents a semantic identity for
+an unnamed column.
 
 A scan row is populated when at least one cell across the scan range's columns has a stored value.
 Styles and worksheet dimensions are not row-block evidence. A run containing at least
@@ -112,13 +122,18 @@ inside a block and are returned during extraction.
 Each match has a stable one-based ordinal, shared column metadata, exact data bounds, and the blank
 separator following it when another block exists. `RowBlockMatchSet.require_count()` validates an
 expected structural count before callers assign positional application names such as tab labels.
-The reader never invents semantic names for unlabeled blocks.
+The reader never invents semantic names for unlabeled blocks. When `max_blocks` is set, discovery
+returns at most that many matches and may stop after the requested final block is closed by the
+declared separator. Blocks below that prefix are intentionally neither returned nor counted.
+Consequently, `require_count(max_blocks)` means that the requested prefix was available; it does
+not assert that the worksheet contains no additional blocks. If fewer blocks exist within the scan
+range, they are returned normally and `require_count()` supplies the stable count-mismatch error.
 
 `ExcelReader.extract_row_block()` returns coordinate-preserving `RowBlockData`. Its `values` and
 `records()` interfaces mirror ordinary table data, including the requirement that normalized
 column names be unique before mapping records are produced. Discovery obeys `max_scan_cells` and
-`max_candidates`. A populated final scan row produces a stable warning because the explicit scan
-range may have truncated the last block.
+`max_candidates`. A populated final scan row reached during discovery produces a stable warning
+because the explicit scan range may have truncated the last block.
 
 ## Sectioned matrices
 
