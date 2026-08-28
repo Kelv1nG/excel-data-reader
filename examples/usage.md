@@ -297,7 +297,9 @@ def read_report_blocks(path: str) -> tuple[RowBlockData, ...]:
         sheet="Report",
         header_range="B6:D6",
         scan_range="A8:D5000",
-        separator=BlankRowSeparator(min_rows=2),
+        separator=BlankRowSeparator(min_rows=1),
+        max_blocks=3,
+        column_names={"A": "row_label"},
     )
     with ExcelReader.open(path) as reader:
         matches = reader.find_row_blocks(query).require_count(3)
@@ -310,10 +312,12 @@ print(blocks[0].columns)
 print(blocks[0].records())
 ```
 
-Column A receives `column_1` because the authored header range begins in column B. Blank runs of
-two or more rows separate blocks; a single internal blank row remains in the extracted block.
-Blocks have no semantic workbook identity, so assign application tab names only after validating
-the discovered count with `require_count()`.
+Column A receives the explicit logical name `row_label` because the authored header range begins
+in column B. Without `column_names`, it would receive the synthetic name `column_1`. With
+`min_rows=1`, every run of one or more blank rows separates blocks. `max_blocks=3` selects only the
+first three physical blocks, while the finite scan range remains the fallback safety boundary if
+fewer blocks exist. Blocks have no semantic workbook identity, so assign application tab names
+only after validating that the requested prefix was available with `require_count()`.
 
 ## Extract a sectioned matrix
 

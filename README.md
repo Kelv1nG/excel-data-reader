@@ -176,7 +176,9 @@ query = RowBlockQuery(
     sheet="Report",
     header_range="B6:D6",
     scan_range="A8:D5000",
-    separator=BlankRowSeparator(min_rows=2),
+    separator=BlankRowSeparator(min_rows=1),
+    max_blocks=3,
+    column_names={"A": "row_label"},
 )
 
 with ExcelReader.open("report.xlsx") as workbook:
@@ -190,16 +192,25 @@ with ExcelReader.open("report.xlsx") as workbook:
 first_records = blocks[0].records()
 ```
 
-The header range may cover fewer columns than the scan range. In this example, the unnamed column
-A receives the stable name `column_1`, while B through D retain their authored headers. Every
-extracted block exposes `columns`, `values`, `rows`, and `records()` and retains original worksheet
-coordinates.
+The header range may cover fewer columns than the scan range. In this example, `column_names`
+assigns the unnamed source column A the logical name `row_label`, while B through D retain their
+authored headers. Without that explicit mapping, A receives the stable synthetic name `column_1`.
+Every extracted block exposes `columns`, `values`, `rows`, and `records()` and retains original
+worksheet coordinates. Explicit names are keyed by case-insensitive Excel column letters and must
+refer to columns inside `scan_range`; source headers remain available as `ColumnInfo.raw_header`.
 
 A row is blank only when every cell across the scan range's columns has no stored value. Runs of
 at least `min_rows` split blocks and are excluded. Shorter internal blank runs remain inside the
 surrounding block; leading and trailing blanks are excluded. A populated final row in
 `scan_range` produces `ROW_BLOCK_SCAN_BOUNDARY_REACHED`, because more data may exist below the
 caller-supplied safety boundary.
+
+Set `max_blocks` to return only the first requested number of physical blocks. Discovery may stop
+once the final requested block is closed by a separator, but `scan_range` remains required as the
+finite fallback and safety boundary when fewer blocks exist. A limit deliberately ignores later
+blocks: `require_count(3)` on a result limited to three validates that the requested prefix was
+available, not that the worksheet contains exactly three blocks. Omit `max_blocks` when extra
+blocks should instead cause an exact-count mismatch.
 
 When an application wants tab names, validate the count before assigning them positionally:
 

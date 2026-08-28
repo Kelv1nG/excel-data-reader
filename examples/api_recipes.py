@@ -136,6 +136,8 @@ def extract_row_blocks(
     header_range: str,
     scan_range: str,
     min_separator_rows: int = 2,
+    max_blocks: int | None = None,
+    column_names: Mapping[str, str] | None = None,
     expected_count: int | None = None,
 ) -> tuple[RowBlockData, ...]:
     """Extract ordered unlabeled row blocks beneath one shared header row.
@@ -146,7 +148,11 @@ def extract_row_blocks(
         header_range: Finite one-row range supplying authored headers.
         scan_range: Finite data rectangle inspected for blank-separated blocks.
         min_separator_rows: Consecutive blank rows required to split blocks.
-        expected_count: Optional exact block count validated before extraction.
+        max_blocks: Optional maximum number of physical blocks to discover.
+        column_names: Optional logical output names keyed by Excel column letters.
+        expected_count: Optional returned block count validated before extraction. When
+            max_blocks is set, this validates prefix availability rather than the
+            worksheet's total block count.
     """
 
     query = RowBlockQuery(
@@ -154,6 +160,8 @@ def extract_row_blocks(
         header_range=header_range,
         scan_range=scan_range,
         separator=BlankRowSeparator(min_rows=min_separator_rows),
+        max_blocks=max_blocks,
+        column_names={} if column_names is None else column_names,
     )
     with ExcelReader.open(path) as reader:
         result = reader.find_row_blocks(query)
