@@ -56,6 +56,35 @@ def _save_row_blocks(path: Path) -> None:
     workbook.close()
 
 
+def _save_variable_gap_blocks(path: Path) -> None:
+    """Create four blocks separated by blank runs of varying lengths.
+
+    Args:
+        path: Destination path for the temporary workbook.
+    """
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Blocks"
+    sheet["B6"] = "Value A"
+    sheet["C6"] = "Value B"
+    sheet["D6"] = "Value C"
+    for row, label in (
+        (8, "month1"),
+        (9, "month2"),
+        (12, "year1"),
+        (13, "year2"),
+        (15, "metric1"),
+        (17, "other1"),
+    ):
+        sheet.cell(row, 1, label)
+        sheet.cell(row, 2, row * 10)
+        sheet.cell(row, 3, row * 100)
+        sheet.cell(row, 4, row * 1000)
+    workbook.save(path)
+    workbook.close()
+
+
 def _query(*, min_rows: int = 2, scan_range: str = "A8:D25") -> RowBlockQuery:
     """Return the standard explicit row-block query used by tests.
 
@@ -129,6 +158,124 @@ def test_one_blank_row_can_be_declared_as_a_separator(tmp_path: Path) -> None:
     assert matches.matches[0].separator_after.a1 == "A10:D10"
 
 
+def test_max_blocks_returns_requested_prefix_across_variable_separator_runs(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "variable-gaps.xlsx"
+    _save_variable_gap_blocks(path)
+    query = RowBlockQuery(
+        sheet="Blocks",
+        header_range="B6:D6",
+        scan_range="A8:D25",
+        separator=BlankRowSeparator(min_rows=1),
+        max_blocks=3,
+    )
+
+    with ExcelReader.open(path) as reader:
+        limited = reader.find_row_blocks(query)
+        requested = limited.require_count(3)
+        all_matches = reader.find_row_blocks(
+            RowBlockQuery(
+                sheet="Blocks",
+                header_range="B6:D6",
+                scan_range="A8:D25",
+                separator=BlankRowSeparator(min_rows=1),
+            )
+        )
+
+    assert [match.range for match in requested] == ["A8:D9", "A12:D13", "A15:D15"]
+    assert requested[0].separator_after is not None
+    assert requested[0].separator_after.a1 == "A10:D11"
+    assert requested[1].separator_after is not None
+    assert requested[1].separator_after.a1 == "A14:D14"
+    assert requested[2].separator_after is None
+    assert len(all_matches.matches) == 4
+    assert not limited.diagnostics
+
+
+def test_max_blocks_returns_available_prefix_when_request_cannot_be_filled(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "variable-gaps.xlsx"
+    _save_variable_gap_blocks(path)
+    query = RowBlockQuery(
+        sheet="Blocks",
+        header_range="B6:D6",
+        scan_range="A8:D25",
+        separator=BlankRowSeparator(min_rows=1),
+        max_blocks=5,
+    )
+
+    with ExcelReader.open(path) as reader:
+        matches = reader.find_row_blocks(query)
+
+    assert len(matches.matches) == 4
+    with pytest.raises(ExcelDataReaderError) as captured:
+        matches.require_count(5)
+    assert captured.value.diagnostics[0].code is DiagnosticCode.ROW_BLOCK_COUNT_MISMATCH
+
+
+def test_column_names_apply_explicit_logical_names_and_preserve_source_metadata(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "named-columns.xlsx"
+    _save_row_blocks(path)
+    supplied_names = {"a": "row_label", "B": "amount"}
+    query = RowBlockQuery(
+        sheet="Blocks",
+        header_range="B6:D6",
+        scan_range="A8:D25",
+        column_names=supplied_names,
+        max_blocks=1,
+    )
+    supplied_names["a"] = "changed"
+
+    with ExcelReader.open(path) as reader:
+        match = reader.find_row_blocks(query).require_count(1)[0]
+        data = reader.extract_row_block(match)
+
+    assert dict(query.column_names) == {"A": "row_label", "B": "amount"}
+    assert [column.name for column in data.columns] == [
+        "row_label",
+        "amount",
+        "Value B",
+        "Value C",
+    ]
+    assert data.columns[0].source_column == 1
+    assert data.columns[0].raw_header is None
+    assert data.columns[0].requested_header == "row_label"
+    assert data.columns[0].header_coordinate is None
+    assert data.columns[1].raw_header == "Value A"
+    assert data.columns[1].requested_header == "amount"
+    assert data.columns[1].header_coordinate is not None
+    assert data.columns[1].header_coordinate.a1 == "B6"
+    assert dict(data.records()[0]) == {
+        "row_label": "month1",
+        "amount": 80,
+        "Value B": 800,
+        "Value C": 8000,
+    }
+
+
+def test_column_names_must_identify_columns_inside_the_scan_range(tmp_path: Path) -> None:
+    path = tmp_path / "outside-column-name.xlsx"
+    _save_row_blocks(path)
+    query = RowBlockQuery(
+        sheet="Blocks",
+        header_range="B6:D6",
+        scan_range="A8:D25",
+        column_names={"E": "outside"},
+    )
+
+    with ExcelReader.open(path) as reader, pytest.raises(ExcelDataReaderError) as captured:
+        reader.find_row_blocks(query)
+
+    diagnostic = captured.value.diagnostics[0]
+    assert diagnostic.code is DiagnosticCode.INVALID_ROW_BLOCK_QUERY
+    assert diagnostic.sheet == "Blocks"
+    assert diagnostic.address == "A8:D25"
+
+
 def test_populated_scan_bottom_warns_that_the_final_block_may_continue(tmp_path: Path) -> None:
     path = tmp_path / "scan-edge.xlsx"
     _save_row_blocks(path)
@@ -199,6 +346,24 @@ def test_row_block_query_and_separator_validate_arguments() -> None:
     invalid_header: Any = 6
     with pytest.raises(TypeError, match="header_range"):
         RowBlockQuery("Blocks", invalid_header, "A8:D25")
+    with pytest.raises(ValueError, match="max_blocks"):
+        RowBlockQuery("Blocks", "B6:D6", "A8:D25", max_blocks=0)
+    with pytest.raises(TypeError, match="max_blocks"):
+        RowBlockQuery("Blocks", "B6:D6", "A8:D25", max_blocks=True)
+    invalid_column_names: Any = []
+    with pytest.raises(TypeError, match="column_names"):
+        RowBlockQuery("Blocks", "B6:D6", "A8:D25", column_names=invalid_column_names)
+    with pytest.raises(ValueError, match="column_names"):
+        RowBlockQuery("Blocks", "B6:D6", "A8:D25", column_names={"A1": "row_label"})
+    with pytest.raises(ValueError, match="column_names"):
+        RowBlockQuery("Blocks", "B6:D6", "A8:D25", column_names={"A": " "})
+    with pytest.raises(ValueError, match="duplicate"):
+        RowBlockQuery(
+            "Blocks",
+            "B6:D6",
+            "A8:D25",
+            column_names={"A": "first", "a": "second"},
+        )
 
 
 def test_row_block_discovery_enforces_scan_and_candidate_limits(tmp_path: Path) -> None:
@@ -258,7 +423,12 @@ def test_row_blocks_use_the_legacy_xls_adapter(tmp_path: Path) -> None:
         sheet.write(row, 3, row * 1000)
     workbook.save(str(path))
 
-    query = RowBlockQuery("Blocks", "B6:D6", "A8:D15")
+    query = RowBlockQuery(
+        "Blocks",
+        "B6:D6",
+        "A8:D15",
+        column_names={"A": "row_label"},
+    )
     with ExcelReader.open(path) as reader:
         matches = reader.find_row_blocks(query)
         first = reader.extract_row_block(matches.require_count(2)[0])
@@ -266,4 +436,5 @@ def test_row_blocks_use_the_legacy_xls_adapter(tmp_path: Path) -> None:
 
     assert workbook_format is WorkbookFormat.LEGACY_XLS
     assert [match.range for match in matches.matches] == ["A8:D9", "A12:D12"]
+    assert first.columns[0].name == "row_label"
     assert first.values[0] == ("month1", 70.0, 700.0, 7000.0)

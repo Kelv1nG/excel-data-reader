@@ -183,15 +183,21 @@ class RowBlockQuery:
         header_range: Finite one-row A1 range supplying authored column names.
         scan_range: Finite A1 rectangle whose populated rows may form blocks.
         separator: Blank-row run required to separate adjacent blocks.
+        max_blocks: Optional maximum number of physical blocks to discover from the
+            beginning of the scan range.
+        column_names: Explicit logical output names keyed by physical Excel column
+            letters.
     """
 
     sheet: str
     header_range: Rectangle | str
     scan_range: Rectangle | str
     separator: BlankRowSeparator = field(default_factory=BlankRowSeparator)
+    max_blocks: int | None = None
+    column_names: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Reject empty sheet or range values and invalid separator objects."""
+        """Freeze column names and reject invalid query fields."""
 
         if not isinstance(self.sheet, str) or not self.sheet:
             raise ValueError("sheet must be a non-empty string")
@@ -205,6 +211,30 @@ class RowBlockQuery:
                 raise ValueError(f"{name} must not be empty")
         if not isinstance(self.separator, BlankRowSeparator):
             raise TypeError("separator must be a BlankRowSeparator")
+        if self.max_blocks is not None:
+            if isinstance(self.max_blocks, bool) or not isinstance(self.max_blocks, int):
+                raise TypeError("max_blocks must be an integer or None")
+            if self.max_blocks < 1:
+                raise ValueError("max_blocks must be at least one")
+        if not isinstance(self.column_names, Mapping):
+            raise TypeError("column_names must be a mapping")
+        column_names: dict[str, str] = {}
+        for source_column, name in self.column_names.items():
+            if not isinstance(source_column, str):
+                raise TypeError("column_names keys must be Excel column letters")
+            normalized_source = source_column.strip().upper()
+            if not normalized_source or any(
+                character < "A" or character > "Z" for character in normalized_source
+            ):
+                raise ValueError("column_names keys must be Excel column letters")
+            if normalized_source in column_names:
+                raise ValueError(f"column_names contains duplicate column {normalized_source!r}")
+            if not isinstance(name, str):
+                raise TypeError("column_names values must be strings")
+            if not normalize_header(name):
+                raise ValueError("column_names values must not be empty")
+            column_names[normalized_source] = name
+        object.__setattr__(self, "column_names", MappingProxyType(column_names))
 
 
 @dataclass(frozen=True)

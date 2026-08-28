@@ -580,6 +580,29 @@ class ExcelReader:
                     address=header_bounds.a1,
                 )
             )
+        requested_column_names: dict[int, str] = {}
+        for column_letters, requested_name in query.column_names.items():
+            try:
+                source_column = column_index_from_string(column_letters)
+            except ValueError as error:
+                raise ExcelDataReaderError(
+                    Diagnostic(
+                        DiagnosticCode.INVALID_ROW_BLOCK_QUERY,
+                        f"column_names key {column_letters!r} is not valid Excel column letters",
+                        sheet=query.sheet,
+                        address=scan_bounds.a1,
+                    )
+                ) from error
+            if not scan_bounds.left <= source_column <= scan_bounds.right:
+                raise ExcelDataReaderError(
+                    Diagnostic(
+                        DiagnosticCode.INVALID_ROW_BLOCK_QUERY,
+                        f"column_names column {column_letters!r} must lie inside scan_range",
+                        sheet=query.sheet,
+                        address=scan_bounds.a1,
+                    )
+                )
+            requested_column_names[source_column] = requested_name
         self._enforce_scan_limit(worksheet, bounds=scan_bounds)
 
         columns = tuple(
@@ -588,6 +611,7 @@ class ExcelReader:
                 header_bounds,
                 source_column,
                 position,
+                requested_column_names.get(source_column),
             )
             for position, source_column in enumerate(
                 range(scan_bounds.left, scan_bounds.right + 1),
@@ -595,13 +619,37 @@ class ExcelReader:
             )
         )
         populated_rows: list[int] = []
+        started_blocks = 0
+        blank_run = 0
+        in_block = False
+        early_stop_limit = query.max_blocks
+        if early_stop_limit is not None:
+            early_stop_limit = min(early_stop_limit, self.max_candidates + 1)
         for row in range(scan_bounds.top, scan_bounds.bottom + 1):
             self._checkpoint()
-            if any(
+            populated = any(
                 worksheet.cell(row, column).value is not None
                 for column in range(scan_bounds.left, scan_bounds.right + 1)
-            ):
+            )
+            if populated:
+                if not in_block:
+                    started_blocks = 1
+                    in_block = True
+                elif blank_run >= query.separator.min_rows:
+                    started_blocks += 1
+                blank_run = 0
                 populated_rows.append(row)
+                continue
+
+            if not in_block:
+                continue
+            blank_run += 1
+            if (
+                early_stop_limit is not None
+                and started_blocks >= early_stop_limit
+                and blank_run >= query.separator.min_rows
+            ):
+                break
 
         if not populated_rows:
             return RowBlockMatchSet(
@@ -648,7 +696,10 @@ class ExcelReader:
                     address=scan_bounds.a1,
                 )
             )
-        selected_segments = segments[: self.max_candidates]
+        selected_limit = self.max_candidates
+        if query.max_blocks is not None:
+            selected_limit = min(selected_limit, query.max_blocks)
+        selected_segments = segments[:selected_limit]
         edge_warning = None
         if populated_rows[-1] == scan_bounds.bottom:
             edge_warning = Diagnostic(
@@ -1437,6 +1488,7 @@ class ExcelReader:
         header_bounds: Rectangle,
         source_column: int,
         position: int,
+        requested_name: str | None,
     ) -> ColumnInfo:
         """Build shared column metadata for one row-block scan column.
 
@@ -1445,14 +1497,16 @@ class ExcelReader:
             header_bounds: Explicit one-row range supplying authored headers.
             source_column: One-based physical scan column to describe.
             position: One-based logical position used for synthetic names.
+            requested_name: Explicit caller-supplied logical output name, if any.
         """
 
         inside_header = header_bounds.left <= source_column <= header_bounds.right
         raw = worksheet.cell(header_bounds.top, source_column).value if inside_header else None
         return ColumnInfo(
-            name=self._column_name(raw, position),
+            name=requested_name or self._column_name(raw, position),
             source_column=source_column,
             raw_header=raw,
+            requested_header=requested_name,
             header_coordinate=(
                 Coordinate(header_bounds.top, source_column) if inside_header else None
             ),
