@@ -1423,7 +1423,7 @@ class ExcelReader:
             cached_value=cached_value,
             data_type=str(formula_cell.data_type),
             number_format=str(formula_cell.number_format),
-            is_date=bool(date_cell.is_date),
+            is_date=bool(getattr(date_cell, "is_date", False)),
             hidden_row=row in hidden_rows,
             hidden_column=column in hidden_columns,
         )

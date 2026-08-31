@@ -124,6 +124,55 @@ def test_merged_sections_resolve_hierarchical_headers_and_record_shapes(tmp_path
     }
 
 
+def test_one_row_matrix_extracts_merged_value_placeholder_as_blank(tmp_path: Path) -> None:
+    """Keep non-anchor merged matrix coordinates blank and non-date.
+
+    Args:
+        tmp_path: Temporary directory receiving the test workbook.
+    """
+
+    path = tmp_path / "one-row-merged-value.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Matrix"
+    sheet.merge_cells("C1:D1")
+    sheet["C1"] = "group1"
+    sheet["C2"] = "attr1"
+    sheet["D2"] = "attr2"
+    sheet["A3"] = "Lookup"
+    sheet["B3"] = "only row"
+    sheet.merge_cells("C3:D3")
+    sheet["C3"] = 42
+    workbook.save(path)
+    workbook.close()
+
+    with ExcelReader.open(path) as reader:
+        match = reader.find_matrices(
+            MatrixQuery(
+                ("Lookup",),
+                sheet="Matrix",
+                within="A1:D3",
+                header_rows=(1, 2),
+                identifier_column="B",
+            )
+        ).require_section("Lookup")
+        data = reader.extract_matrix(match)
+
+    assert match.range == "B3:D3"
+    assert [item.cell.value for item in data.values] == [42, None]
+    assert [item.cell.address for item in data.values] == ["C3", "D3"]
+    assert [item.cell.is_date for item in data.values] == [False, False]
+    assert dict(data.wide_records()[0]) == {
+        "section": "Lookup",
+        "identifier": "only row",
+        "group1__attr1": 42,
+        "group1__attr2": None,
+        "source_sheet": "Matrix",
+        "source_row": 3,
+        "identifier_cell": "B3",
+    }
+
+
 def test_unmerged_sections_propagate_until_next_anchor_or_blank_rows(tmp_path: Path) -> None:
     path = tmp_path / "unmerged-sections.xlsx"
     workbook = Workbook()
