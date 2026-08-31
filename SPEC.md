@@ -167,7 +167,9 @@ identifier produce a stable warning rather than inheriting the preceding identif
 `ExcelReader.find_matrices()` returns one `MatrixMatch` per discovered section anchor plus stable
 missing, ambiguity, and malformed-layout diagnostics. `MatrixMatchSet.require_section()` requires
 exactly one match for a logical section. `ExcelReader.extract_matrix()` returns source-addressed
-matrix values. `MatrixData.long_records()` produces the normalized, schema-stable representation
+matrix values. When a selected matrix value is a non-anchor coordinate inside a merged range, it
+is returned as a blank physical cell with `is_date=False`; the top-left anchor value is not
+propagated. `MatrixData.long_records()` produces the normalized, schema-stable representation
 recommended for analytical databases; `MatrixData.wide_records()` provides one record per
 identifier with collision-checked flattened header paths.
 

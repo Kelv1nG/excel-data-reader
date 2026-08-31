@@ -252,7 +252,9 @@ The reader uses horizontally merged parent headers as authored column spans. Unm
 labels are filled forward only until the next label on that header row. A vertically merged
 section label supplies an exact row boundary; an ordinary section-label cell remains active until
 the next requested section, the configured body boundary, or the last populated selected row.
-Individual identifiers are never filled down into blank cells.
+Individual identifiers are never filled down into blank cells. Likewise, when a matrix body
+crosses a merged value range, only its top-left anchor contains the authored value; other physical
+coordinates in that merge remain blank in extracted results.
 
 `MatrixQuery` arguments are:
 
