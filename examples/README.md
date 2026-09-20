@@ -185,6 +185,7 @@ The matrix examples are split into:
 
 - workbook inventory;
 - native tables, defined names, explicit ranges, and sparse sheets;
+- signed row and column lookups from normalized text anchors;
 - all-match inspection and exactly-one structured discovery;
 - discovery reports;
 - blank-separated row blocks with shared explicit headers;

@@ -8,6 +8,7 @@ copy the function that matches the workbook you have and adapt its arguments.
 | Authored Excel Table | `get_table()` |
 | Rectangular defined name | `get_named_range()` |
 | Known cell rectangle | `read_range()` |
+| Scalar near a text label | `get_value_from_anchor()` |
 | Headers are known, location is not | `find_tables()` or `query_tables()` |
 | Repeated grouped column headers | `find_matrices()` and `extract_matrix()` |
 | No trustworthy boundary | `read_sheet()` |
@@ -101,6 +102,63 @@ print(raw.rows[0].cells[0].address)  # original worksheet coordinate
 
 `get_named_range(name, header=None)` provides the same headerless behavior for a rectangular
 defined name.
+
+## Read a scalar relative to a text anchor
+
+Use signed row and column offsets for form-like sheets whose scalar values sit at stable positions
+relative to text labels:
+
+```python
+from excel_data_reader import AnchorValueMatch, ExcelReader
+
+
+def read_anchor_value(
+    path: str,
+    anchor_value: str,
+    *,
+    row_offset: int = 0,
+    column_offset: int = 1,
+    sheet: str | None = None,
+    within: str | None = None,
+) -> AnchorValueMatch:
+    """Read one scalar cell at a signed offset from a normalized text anchor.
+
+    Args:
+        path: Workbook path to open.
+        anchor_value: Text value used to locate the anchor cell.
+        row_offset: Signed row delta; positive values move down.
+        column_offset: Signed column delta; positive values move right.
+        sheet: Optional exact worksheet name used to limit discovery.
+        within: Optional finite A1 rectangle containing the anchor and target.
+    """
+
+    with ExcelReader.open(path) as reader:
+        return reader.get_value_from_anchor(
+            anchor_value,
+            row_offset=row_offset,
+            column_offset=column_offset,
+            sheet=sheet,
+            within=within,
+        )
+
+
+result = read_anchor_value(
+    "report.xlsx",
+    "Account Total",
+    row_offset=0,
+    column_offset=1,
+    sheet="Summary",
+)
+print(result.anchor_cell.address, result.value_cell.address, result.value)
+```
+
+Positive row offsets move down, negative row offsets move up, positive column offsets move right,
+and negative column offsets move left. The offsets may not both be zero. When `sheet` or `within`
+is omitted, lookup broadens to all worksheets or their apparent populated bounds, respectively,
+while retaining configured scan limits. `within`, when present, must contain both cells.
+
+`get_value_from_anchor()` reports zero or repeated anchors instead of selecting arbitrarily. Use
+`find_values_from_anchor()` to inspect every match and its source coordinates before deciding.
 
 ## Discover a table by headers
 

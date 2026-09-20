@@ -10,6 +10,7 @@ from excel_data_reader import (
     AnalysisControl,
     AnalysisRequest,
     AnalysisResponse,
+    AnchorValueMatch,
     BlankRowSeparator,
     BodyPolicy,
     DiscoveryReport,
@@ -88,6 +89,38 @@ def read_sparse_sheet(
 
     with ExcelReader.open(path) as reader:
         return reader.read_sheet(sheet, include_styled_blanks=include_styled_blanks)
+
+
+def read_value_from_anchor(
+    path: str | Path,
+    anchor_value: str,
+    *,
+    row_offset: int = 0,
+    column_offset: int = 1,
+    sheet: str | None = None,
+    within: str | None = None,
+    value_mode: ValueMode | str = ValueMode.FORMULA,
+) -> AnchorValueMatch:
+    """Read one scalar cell at a signed offset from a normalized text anchor.
+
+    Args:
+        path: Workbook path to open.
+        anchor_value: Text value used to locate the anchor cell.
+        row_offset: Signed row delta; positive values move down.
+        column_offset: Signed column delta; positive values move right.
+        sheet: Optional exact worksheet name used to limit discovery.
+        within: Optional finite A1 rectangle containing the anchor and target.
+        value_mode: Whether formula targets expose formulas, cached values, or both.
+    """
+
+    with ExcelReader.open(path, value_mode=value_mode) as reader:
+        return reader.get_value_from_anchor(
+            anchor_value,
+            row_offset=row_offset,
+            column_offset=column_offset,
+            sheet=sheet,
+            within=within,
+        )
 
 
 def find_matching_tables(
@@ -227,6 +260,14 @@ def main() -> None:
     named = read_defined_name(named_path, "InventoryData")
     headerless = read_known_range(named_path, "Raw Import", "C5:F8", header=None)
     sparse = read_sparse_sheet(named_path, "Raw Import")
+    anchored = read_value_from_anchor(
+        scattered_path,
+        "Customer ID",
+        row_offset=1,
+        column_offset=6,
+        sheet="Scattered Orders",
+        within="A4:G8",
+    )
 
     query = TableQuery(
         required_headers=("account number", "amount"),
@@ -266,6 +307,7 @@ def main() -> None:
         "named_rows": len(named.rows),
         "headerless_columns": [column.name for column in headerless.columns],
         "sparse_cells": len(sparse.cells),
+        "anchor_value": anchored.value,
         "header_candidates": len(candidates.matches),
         "discovered_rows": len(discovered.rows),
         "explain_candidates": len(report.candidates),

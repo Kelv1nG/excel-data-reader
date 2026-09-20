@@ -4,7 +4,8 @@ A Python 3.12 library for deterministic table discovery and coordinate-preservin
 Excel 97-2003 `.xls` and OOXML `.xlsx`, `.xlsm`, `.xltx`, and `.xltm` workbooks.
 
 The reader distinguishes native Excel Tables, named ranges, explicit ranges, and header-discovered
-regions. It reports ambiguity instead of choosing an arbitrary result, supports non-adjacent
+regions. It also resolves scalar cells at signed row and column offsets from normalized text
+anchors. It reports ambiguity instead of choosing an arbitrary result, supports non-adjacent
 columns, and provides a sparse whole-sheet fallback.
 
 ## Quick start
@@ -276,6 +277,38 @@ header paths with `__`, rejecting collisions rather than silently overwriting a 
 See `examples/08_sectioned_matrix.py` and its paired workbook for merged and unmerged section
 anchors under the same grouped header.
 
+## Anchor-relative scalar values
+
+Use `get_value_from_anchor()` for form-like worksheets where a text label identifies a nearby
+scalar value:
+
+```python
+with ExcelReader.open("report.xlsx") as workbook:
+    match = workbook.get_value_from_anchor(
+        "mycell",
+        row_offset=-1,
+        column_offset=2,
+        sheet="Summary",
+        within="A1:M100",
+    )
+
+print(match.anchor_cell.address)
+print(match.value_cell.address, match.value)
+```
+
+Offsets follow worksheet coordinates: positive rows move down, negative rows move up, positive
+columns move right, and negative columns move left. The default `(row_offset=0,
+column_offset=1)` selects the cell immediately to the right. `sheet` and `within` are optional;
+without them, discovery scans every worksheet's apparent bounds subject to the reader's scan and
+candidate limits. A supplied `within` rectangle must contain both the anchor and target.
+
+Anchor matching uses the same exact normalization as headers, never fuzzy similarity. The result
+preserves both cells and exposes the target scalar through `.value`, including `None` for a blank
+target. Only ordinary text cells are anchors; numeric, boolean, date, error, and formula cells are
+not coerced into labels. Blank-target reads do not expand the worksheet's apparent dimensions.
+Use `find_values_from_anchor()` when the caller wants every eligible occurrence;
+`get_value_from_anchor()` requires exactly one and reports not-found or ambiguity diagnostics.
+
 ## Explainable discovery
 
 Use `explain()` when a platform needs to show why a table matched—or why it did not:
@@ -326,6 +359,7 @@ with ExcelReader.open("orders.xlsx", value_mode="both") as workbook:
     native = workbook.get_table("SalesTable")
     named = workbook.get_named_range("InvoiceData", header=0)
     headerless = workbook.read_range("Raw", "C5:H100", header=None)
+    scalar = workbook.get_value_from_anchor("Account Total", sheet="Summary")
 
     sparse_sheet = workbook.read_sheet("Raw")
     matrix = sparse_sheet.to_matrix()
@@ -361,6 +395,7 @@ demonstrating:
 - explicit blank-separated row-block discovery with shared headers;
 - rectangular defined names;
 - headerless ranges and sparse sheet reads;
+- signed two-axis scalar lookup from normalized text anchors;
 - aliases, optional headers, location hints, and body policies;
 - explainable discovery reports and command-line inspection.
 - the versioned platform service with bounded uploaded-byte handling.
