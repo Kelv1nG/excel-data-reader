@@ -89,6 +89,36 @@ rectangle is a table.
 Explicit and named ranges may be read with `header=None`. Columns then receive stable synthetic
 names (`column_1`, `column_2`, and so on) while retaining their physical column numbers.
 
+## Anchor-relative scalar values
+
+`ExcelReader.find_values_from_anchor()` discovers text-valued anchor cells and returns the cells at
+a caller-supplied signed row and column offset. Anchor text uses the same exact deterministic
+normalization as headers; fuzzy matching is not performed. Results retain both the anchor
+`CellData` and the offset value `CellData`, including their physical coordinates and typed values.
+Numeric, boolean, date, error, and formula cells are not text anchors even when their rendered or
+source text would normalize to the query.
+
+`row_offset` follows worksheet row numbering: positive values move down and negative values move
+up. `column_offset` follows worksheet column numbering: positive values move right and negative
+values move left. Both offsets are integers, booleans are invalid, and they may not both be zero.
+The default `(row_offset=0, column_offset=1)` selects the cell immediately to the right.
+
+An optional exact worksheet name limits discovery to one sheet. An optional finite `within`
+rectangle limits both anchor discovery and eligible target cells; without it, discovery scans each
+selected worksheet's apparent bounds. All scans obey `max_scan_cells`. Targets may be blank, but
+must remain inside the supplied rectangle when present and inside the source format's worksheet
+grid. Out-of-bounds targets are reported with stable diagnostics rather than clipped.
+Reading an absent blank target does not materialize a worksheet cell or change apparent bounds.
+
+Matches are ordered by workbook sheet order and then row-major coordinate order. Repeated anchors
+remain explicit: `find_values_from_anchor()` returns every eligible match, while
+`get_value_from_anchor()` requires exactly one and reports ambiguity otherwise. Merged-cell values
+are never propagated: discovery naturally identifies an authored value at its physical anchor,
+and an offset target inside a non-anchor merged coordinate remains a blank physical cell.
+Discovery is bounded by the reader's `max_candidates` limit. A truncated or otherwise incomplete
+scan carries `SCAN_LIMIT_EXCEEDED`; an exactly-one accessor does not treat an incomplete scan as a
+unique result.
+
 ## Blank-separated row blocks
 
 `RowBlockQuery` discovers ordered rectangular row blocks that share one explicitly located header
@@ -270,4 +300,4 @@ production workbooks without making those files part of the package or repositor
 
 The library does not implement fuzzy headers, automatic dense-region detection, arbitrary
 multi-row table headers outside the explicit sectioned-matrix contract, ordinal compression of
-unrelated columns, joins, or label/value form extraction.
+unrelated columns, joins, or multi-field form extraction beyond anchor-relative scalar lookup.
