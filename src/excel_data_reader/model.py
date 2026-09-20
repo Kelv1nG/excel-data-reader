@@ -518,6 +518,69 @@ class CellData:
 
 
 @dataclass(frozen=True)
+class AnchorValueMatch:
+    """One text anchor and the cell selected by a signed two-axis offset.
+
+    Attributes:
+        anchor_cell: Physical cell whose normalized text matched the requested anchor.
+        value_cell: Physical cell selected by the requested offsets.
+        row_offset: Signed row delta from the anchor to the selected cell.
+        column_offset: Signed column delta from the anchor to the selected cell.
+    """
+
+    anchor_cell: CellData
+    value_cell: CellData
+    row_offset: int
+    column_offset: int
+
+    @property
+    def value(self) -> Any:
+        """Return the typed value stored in the selected offset cell."""
+
+        return self.value_cell.value
+
+
+@dataclass(frozen=True)
+class AnchorValueMatchSet:
+    """All eligible matches for one anchor-relative value lookup.
+
+    Attributes:
+        matches: Eligible matches in workbook and row-major order.
+        diagnostics: Stable discovery diagnostics, including incomplete scans.
+    """
+
+    matches: tuple[AnchorValueMatch, ...]
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    def require_one(self) -> AnchorValueMatch:
+        """Return the sole match or raise stable not-found or ambiguity diagnostics."""
+
+        if len(self.matches) == 1:
+            incomplete = tuple(
+                diagnostic
+                for diagnostic in self.diagnostics
+                if diagnostic.code is DiagnosticCode.SCAN_LIMIT_EXCEEDED
+            )
+            if incomplete:
+                raise ExcelDataReaderError(incomplete)
+            return self.matches[0]
+        if not self.matches:
+            diagnostics = self.diagnostics or (
+                Diagnostic(DiagnosticCode.ANCHOR_NOT_FOUND, "no anchor value matched the query"),
+            )
+            raise ExcelDataReaderError(diagnostics)
+        locations = ", ".join(
+            f"{match.anchor_cell.sheet}!{match.anchor_cell.address}" for match in self.matches
+        )
+        raise ExcelDataReaderError(
+            Diagnostic(
+                DiagnosticCode.AMBIGUOUS_ANCHOR,
+                f"anchor query matched {len(self.matches)} cells: {locations}",
+            )
+        )
+
+
+@dataclass(frozen=True)
 class ColumnInfo:
     name: str
     source_column: int

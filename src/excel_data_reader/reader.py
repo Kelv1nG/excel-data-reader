@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from openpyxl import load_workbook
+from openpyxl.cell.cell import Cell
 from openpyxl.utils import column_index_from_string, range_boundaries
 from openpyxl.worksheet.table import Table
 from openpyxl.worksheet.worksheet import Worksheet
@@ -21,6 +22,8 @@ from excel_data_reader.diagnostics import (
 )
 from excel_data_reader.legacy import load_legacy_workbook
 from excel_data_reader.model import (
+    AnchorValueMatch,
+    AnchorValueMatchSet,
     BodyPolicy,
     BodyPolicyMode,
     CandidateReason,
@@ -61,6 +64,11 @@ from excel_data_reader.model import (
     WorkbookInventory,
 )
 from excel_data_reader.normalization import normalize_header
+
+_OOXML_MAX_ROW = 1_048_576
+_OOXML_MAX_COLUMN = 16_384
+_XLS_MAX_ROW = 65_536
+_XLS_MAX_COLUMN = 256
 
 
 @dataclass(frozen=True)
@@ -317,6 +325,202 @@ class ExcelReader:
             source=MatchSource.EXPLICIT_RANGE,
         )
         return self.extract(match)
+
+    def get_value_from_anchor(
+        self,
+        anchor_value: str,
+        *,
+        row_offset: int = 0,
+        column_offset: int = 1,
+        sheet: str | None = None,
+        within: Rectangle | str | None = None,
+    ) -> AnchorValueMatch:
+        """Return the cell at a signed offset from one normalized text anchor.
+
+        Args:
+            anchor_value: Text value used to locate the anchor cell.
+            row_offset: Signed row delta; positive values move down.
+            column_offset: Signed column delta; positive values move right.
+            sheet: Optional exact worksheet name used to limit discovery.
+            within: Optional finite A1 rectangle containing the anchor and target.
+
+        Examples:
+            Read the cell two columns right and one row above ``"mycell"``::
+
+                match = reader.get_value_from_anchor(
+                    "mycell",
+                    row_offset=-1,
+                    column_offset=2,
+                    sheet="Summary",
+                    within="A1:M100",
+                )
+                value = match.value
+        """
+
+        return self.find_values_from_anchor(
+            anchor_value,
+            row_offset=row_offset,
+            column_offset=column_offset,
+            sheet=sheet,
+            within=within,
+        ).require_one()
+
+    def find_values_from_anchor(
+        self,
+        anchor_value: str,
+        *,
+        row_offset: int = 0,
+        column_offset: int = 1,
+        sheet: str | None = None,
+        within: Rectangle | str | None = None,
+    ) -> AnchorValueMatchSet:
+        """Find cells at a signed offset from every normalized text anchor.
+
+        Args:
+            anchor_value: Text value used to locate anchor cells.
+            row_offset: Signed row delta; positive values move down.
+            column_offset: Signed column delta; positive values move right.
+            sheet: Optional exact worksheet name used to limit discovery.
+            within: Optional finite A1 rectangle containing anchors and targets.
+
+        Examples:
+            Inspect every occurrence instead of requiring one::
+
+                result = reader.find_values_from_anchor("account total")
+                locations = [item.anchor_cell.address for item in result.matches]
+        """
+
+        self._require_open()
+        if not isinstance(anchor_value, str) or not normalize_header(anchor_value):
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_ANCHOR_QUERY,
+                    "anchor_value must be a non-empty string",
+                    sheet=sheet,
+                )
+            )
+        if any(
+            isinstance(offset, bool) or not isinstance(offset, int)
+            for offset in (row_offset, column_offset)
+        ):
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_ANCHOR_QUERY,
+                    "row_offset and column_offset must be integers",
+                    sheet=sheet,
+                )
+            )
+        if row_offset == 0 and column_offset == 0:
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_ANCHOR_QUERY,
+                    "row_offset and column_offset may not both be zero",
+                    sheet=sheet,
+                )
+            )
+        normalized_anchor = normalize_header(anchor_value)
+        query_bounds = self._coerce_query_rectangle(within, sheet=sheet)
+        worksheets = (
+            (self._sheet(sheet),) if sheet is not None else tuple(self._workbook.worksheets)
+        )
+        matches: list[AnchorValueMatch] = []
+        diagnostics: list[Diagnostic] = []
+        anchors_considered = 0
+        maximum_row, maximum_column = (
+            (_XLS_MAX_ROW, _XLS_MAX_COLUMN)
+            if self.workbook_format is WorkbookFormat.LEGACY_XLS
+            else (_OOXML_MAX_ROW, _OOXML_MAX_COLUMN)
+        )
+        for worksheet in worksheets:
+            scan_bounds = self._query_scan_bounds(worksheet, query_bounds)
+            if scan_bounds is None:
+                continue
+            try:
+                self._enforce_scan_limit(worksheet, bounds=scan_bounds)
+            except ExcelDataReaderError as error:
+                diagnostics.extend(error.diagnostics)
+                continue
+            hidden_rows = self._hidden_rows(worksheet)
+            hidden_columns = self._hidden_columns(worksheet)
+            for row in worksheet.iter_rows(
+                min_row=scan_bounds.top,
+                max_row=scan_bounds.bottom,
+                min_col=scan_bounds.left,
+                max_col=scan_bounds.right,
+            ):
+                self._checkpoint()
+                for cell in row:
+                    if (
+                        not isinstance(cell.value, str)
+                        or cell.data_type in {"e", "f"}
+                        or normalize_header(cell.value) != normalized_anchor
+                    ):
+                        continue
+                    if anchors_considered >= self.max_candidates:
+                        diagnostics.append(
+                            Diagnostic(
+                                DiagnosticCode.SCAN_LIMIT_EXCEEDED,
+                                f"candidate limit of {self.max_candidates} was reached",
+                                sheet=worksheet.title,
+                                address=cell.coordinate,
+                            )
+                        )
+                        return AnchorValueMatchSet(tuple(matches), tuple(diagnostics))
+                    anchors_considered += 1
+                    target_row = cell.row + row_offset
+                    target_column = cell.column + column_offset
+                    if not (
+                        1 <= target_row <= maximum_row and 1 <= target_column <= maximum_column
+                    ):
+                        diagnostics.append(
+                            Diagnostic(
+                                DiagnosticCode.ANCHOR_TARGET_OUT_OF_BOUNDS,
+                                "offset target lies outside the worksheet grid",
+                                sheet=worksheet.title,
+                                address=cell.coordinate,
+                            )
+                        )
+                        continue
+                    target = Coordinate(target_row, target_column)
+                    if query_bounds is not None and not query_bounds.contains(target):
+                        diagnostics.append(
+                            Diagnostic(
+                                DiagnosticCode.ANCHOR_TARGET_OUT_OF_BOUNDS,
+                                "offset target lies outside the query's within range",
+                                sheet=worksheet.title,
+                                address=cell.coordinate,
+                            )
+                        )
+                        continue
+                    matches.append(
+                        AnchorValueMatch(
+                            anchor_cell=self._cell_data(
+                                worksheet,
+                                cell.row,
+                                cell.column,
+                                hidden_rows=hidden_rows,
+                                hidden_columns=hidden_columns,
+                            ),
+                            value_cell=self._cell_data(
+                                worksheet,
+                                target.row,
+                                target.column,
+                                hidden_rows=hidden_rows,
+                                hidden_columns=hidden_columns,
+                            ),
+                            row_offset=row_offset,
+                            column_offset=column_offset,
+                        )
+                    )
+        if not matches and not diagnostics:
+            diagnostics.append(
+                Diagnostic(
+                    DiagnosticCode.ANCHOR_NOT_FOUND,
+                    f"anchor {anchor_value!r} was not found",
+                    sheet=sheet,
+                )
+            )
+        return AnchorValueMatchSet(tuple(matches), tuple(diagnostics))
 
     def find_native_tables(
         self,
@@ -1373,6 +1577,20 @@ class ExcelReader:
             return None
         return self._cached_workbook[name]
 
+    @staticmethod
+    def _read_cell(worksheet: Worksheet, row: int, column: int) -> Any:
+        """Return a stored cell or a detached blank without expanding dimensions.
+
+        Args:
+            worksheet: Worksheet whose physical cell store is inspected.
+            row: One-based physical row index.
+            column: One-based physical column index.
+        """
+
+        cells = cast(dict[tuple[int, int], Any], worksheet._cells)
+        stored = cells.get((row, column))
+        return stored if stored is not None else Cell(worksheet, row=row, column=column)
+
     def _cell_data(
         self,
         worksheet: Worksheet,
@@ -1392,9 +1610,11 @@ class ExcelReader:
             hidden_columns: One-based indexes of hidden columns.
         """
 
-        formula_cell = worksheet.cell(row, column)
+        formula_cell = self._read_cell(worksheet, row, column)
         cached_sheet = self._cached_sheet(worksheet.title)
-        cached_cell = cached_sheet.cell(row, column) if cached_sheet is not None else None
+        cached_cell = (
+            self._read_cell(cached_sheet, row, column) if cached_sheet is not None else None
+        )
         is_formula = formula_cell.data_type == "f"
         formula = formula_cell.value if is_formula else None
         cached_value = (

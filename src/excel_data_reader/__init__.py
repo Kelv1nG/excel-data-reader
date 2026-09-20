@@ -12,6 +12,8 @@ from excel_data_reader.diagnostics import (
     Severity,
 )
 from excel_data_reader.model import (
+    AnchorValueMatch,
+    AnchorValueMatchSet,
     BlankRowSeparator,
     BodyPolicy,
     BodyPolicyMode,
@@ -82,6 +84,8 @@ __all__ = [
     "AnalysisResponse",
     "AnalysisStatus",
     "AnalysisTimeoutError",
+    "AnchorValueMatch",
+    "AnchorValueMatchSet",
     "BlankRowSeparator",
     "BodyPolicy",
     "BodyPolicyMode",

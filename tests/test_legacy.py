@@ -59,6 +59,21 @@ def test_xls_reader_supports_inventory_explicit_ranges_and_sparse_reads() -> Non
     assert any(cell.address == "G8" and cell.value == 2190.0 for cell in sparse.cells)
 
 
+def test_xls_reader_supports_anchor_relative_values() -> None:
+    with ExcelReader.open(WORKBOOK) as reader:
+        match = reader.get_value_from_anchor(
+            "customer id",
+            row_offset=1,
+            column_offset=6,
+            sheet="Legacy Orders",
+            within="A1:G8",
+        )
+
+    assert match.anchor_cell.address == "A4"
+    assert match.value_cell.address == "G5"
+    assert match.value == 1250.0
+
+
 def test_xls_path_analysis_uses_the_versioned_service_contract() -> None:
     response = analyze_workbook(
         WORKBOOK,
