@@ -54,6 +54,14 @@ from excel_data_reader.model import (
     WorkbookFormat,
     WorkbookInventory,
 )
+from excel_data_reader.multilevel import (
+    MultiLevelColumn,
+    MultiLevelHeaderPart,
+    MultiLevelTableData,
+    MultiLevelTableMatch,
+    MultiLevelTableMatchSet,
+    MultiLevelTableQuery,
+)
 from excel_data_reader.normalization import normalize_header
 from excel_data_reader.reader import ExcelReader
 from excel_data_reader.security import (
@@ -113,6 +121,12 @@ __all__ = [
     "MatrixMatchSet",
     "MatrixQuery",
     "MatrixValue",
+    "MultiLevelColumn",
+    "MultiLevelHeaderPart",
+    "MultiLevelTableData",
+    "MultiLevelTableMatch",
+    "MultiLevelTableMatchSet",
+    "MultiLevelTableQuery",
     "NamedRangeInfo",
     "NativeTableInfo",
     "RangeReference",

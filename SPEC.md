@@ -203,6 +203,83 @@ propagated. `MatrixData.long_records()` produces the normalized, schema-stable r
 recommended for analytical databases; `MatrixData.wide_records()` provides one record per
 identifier with collision-checked flattened header paths.
 
+## Multilevel table headers
+
+`MultiLevelTableQuery` discovers ordinary tables in a caller-declared positive integer
+`header_depth` of consecutive rows. It uses a dedicated reader API:
+`find_multilevel_tables()` and `extract_multilevel_table()`. Ordinary `TableQuery` keeps
+its one-row contract; native tables retain their existing authored-boundary API.
+
+Required selectors are authored labels at any level or complete root-to-node tuple
+paths. Matching uses existing exact normalization. Every selector must resolve within
+one candidate; duplicate authored occurrences require a fuller path or tighter `within`
+scope. Synthetic names are output metadata and cannot act as search anchors. Selecting
+a group includes its descendant physical columns. Output follows selector order, then
+left-to-right descendant order, deduplicating physical columns on their first encounter.
+An explicit `within` range defines the full scan area, including empty header rows
+beyond apparent worksheet dimensions, and remains subject to the scan-cell limit.
+
+Each output path includes every covering authored label inside the declared header band.
+Horizontal merges supply explicit column spans; vertical merges contribute a label only
+once. Unmerged labels cover one column and are never filled sideways. Empty header cells
+add nothing. Identical text in distinct authored cells remains distinct path components.
+Authored labels retain their spelling and are joined with `__` for flat record keys.
+For example both plain C2 = Store with empty C3 and merged C2:C3 = Store under Sales
+Report produce `Sales Report__Store`.
+
+When the last covering authored node spans several columns, an unlabeled leaf receives
+`colN`, using its physical one-based offset within that group. Numbering restarts per
+group and table and counts named positions: `New`, blank, blank produces `New`, `col2`,
+`col3`. Wholly unlabeled columns outside a named span are excluded. Reject normalized
+output-name collisions, including synthetic/authored collisions and flattened-path
+collisions, with `DUPLICATE_MULTILEVEL_HEADER` rather than renaming or overwriting.
+
+Candidates require top-row evidence inside their final footprint and complete merge
+containment. Clipped, crossing, or overlapping groups are malformed. The footprint
+contains selected nodes, ancestors, and all descendants of those ancestors. Required
+selectors may deliberately combine independent root groups and scattered columns;
+blank gaps alone do not divide them. Ambiguous same-band selector occurrences are
+reported without manufacturing combinations. Overlapping fitting row windows remain
+separate ambiguous candidates, rather than guessing the correct start row.
+
+Discover header candidates before inferring bodies and before applying `near`. A later
+nonoverlapping header band caps the earlier body when its depth, complete normalized
+paths, synthetic markers, horizontal source spans, and physical left/right footprint
+match. Include unselected siblings and unlabeled gaps in that comparison. Absolute
+header row numbers and equivalent vertical merge-versus-blank layouts do not affect it.
+The earlier body ends before the later header even without blank separator rows.
+A single repeated word, a different signature, or a disjoint column footprint is not
+this boundary. Return independent matches in workbook order, then header row and column.
+
+Data starts immediately below the header band. Within the repeated-header cap and query
+scope, use the selected columns and existing `BodyPolicy`; the default is two blank rows.
+`last_populated()` also obeys the cap. An explicit `through_row()` that crosses it or
+lies outside the scan range produces `MULTILEVEL_BODY_BOUNDARY_CONFLICT`.
+`near` uses Manhattan distance to complete match rectangles; ties remain ambiguous.
+
+Results preserve typed `CellData`, source columns, and each header label's actual source
+coordinate and cell/merge bounds. Synthetic parts have no invented source address.
+`MultiLevelTableData` exposes `columns`, `rows`, `values`, and `records()`.
+
+Discovery obeys scan-cell and global candidate limits and checks cancellation throughout.
+Exactly the candidate limit is complete if scanning finishes; finding an additional
+candidate is incomplete. Discard provisional matches from an incomplete sheet because
+unseen repetitions may change their bodies. Keep completed earlier sheets but set
+`is_complete=False` and attach `SCAN_LIMIT_EXCEEDED`. `require_one()` refuses incomplete
+results and unresolved `AMBIGUOUS_MULTILEVEL_HEADER` diagnostics before counting matches.
+`candidate_count` records resolved bands before body-policy rejection or `near` filtering,
+so rejected explicit bodies still consume the global candidate budget. On an incomplete
+scan this count covers only the bands encountered. Header diagnostics are also bounded
+per sheet by the remaining candidate budget (at least one); overflow discards that
+sheet's provisional matches and reports `SCAN_LIMIT_EXCEEDED`.
+
+Additional diagnostics are `INVALID_MULTILEVEL_QUERY`, `MALFORMED_MULTILEVEL_HEADER`,
+`AMBIGUOUS_MULTILEVEL_HEADER`, and `DUPLICATE_MULTILEVEL_HEADER`, with source locations.
+The initial contract supports OOXML and BIFF through their existing adapters. Header
+depth inference, nested query mappings, aliases, optional selectors, adjacent wholly
+unlabeled columns, shared-header row-block splitting, CLI commands, and service operations
+are outside this delivery.
+
 ## Results and ambiguity
 
 Discovery returns zero or more immutable `TableMatch` objects. `MatchSet.require_one()` raises a
