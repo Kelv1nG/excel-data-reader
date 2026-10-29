@@ -225,6 +225,52 @@ with ExcelReader.open("report.xlsx") as workbook:
     }
 ```
 
+## Tables with multilevel headers
+
+Use `MultiLevelTableQuery` for ordinary tables with a declared number of header rows:
+
+```python
+from excel_data_reader import ExcelReader, MultiLevelTableQuery
+
+with ExcelReader.open("report.xlsx") as reader:
+    matches = reader.find_multilevel_tables(
+        MultiLevelTableQuery(
+            required_headers=("col1", "Sales Report"),
+            header_depth=3,
+            sheet="Report",
+        )
+    )
+    table = reader.extract_multilevel_table(matches.require_one())
+    records = table.records()
+```
+
+Authored horizontal merges define groups; vertical merges contribute their label once.
+A selected group expands into its leaf columns. Output names retain all ancestor labels,
+for example `Sales Report__Online__New`. Plain single-column headers with empty cells
+below them and equivalent vertical merges produce the same names.
+
+Unnamed children inside a named merged group receive `col1`, `col2`, etc., according to
+their physical position inside that group. A group with `New`, blank, blank yields
+`New`, `col2`, `col3`. Numbering restarts in each group and table. Fully unlabeled columns
+outside named groups are excluded. Conflicting normalized names are reported instead of
+overwritten.
+
+A bare selector can match an authored label at any level; a tuple such as
+`("Sales Report", "Online")` specifies a complete path. Use a full path or `within`
+when a bare label fits multiple nodes or header windows. Generated `colN` names are not
+search anchors. `near` selects the closest complete match and keeps ties ambiguous.
+
+Complete repeated header patterns in the same columns produce independent matches and
+end the previous body before the next header, even with no blank separator. Other body
+boundaries use `BodyPolicy`. An explicit bottom that crosses the next repetition is an
+error. Check `matches.is_complete` and diagnostics before deliberately selecting by index;
+`require_one()` rejects incomplete or ambiguous discovery automatically.
+
+OOXML and legacy `.xls` use the same query. Data and header parts retain their source
+coordinates; synthetic parts have no invented source cell. See
+[`examples/09_multilevel_tables.py`](examples/09_multilevel_tables.py). Regenerate its
+public workbook with `uv run python examples/multilevel_workbook.py`.
+
 ## Sectioned matrices with repeated grouped headers
 
 Use `MatrixQuery` when row sections share multi-level column headers and repeated leaf labels only

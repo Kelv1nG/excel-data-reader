@@ -14,6 +14,7 @@ from openpyxl.utils import column_index_from_string, range_boundaries
 from openpyxl.worksheet.table import Table
 from openpyxl.worksheet.worksheet import Worksheet
 
+from excel_data_reader._multilevel import discover_sheet
 from excel_data_reader.diagnostics import (
     Diagnostic,
     DiagnosticCode,
@@ -62,6 +63,12 @@ from excel_data_reader.model import (
     ValueMode,
     WorkbookFormat,
     WorkbookInventory,
+)
+from excel_data_reader.multilevel import (
+    MultiLevelTableData,
+    MultiLevelTableMatch,
+    MultiLevelTableMatchSet,
+    MultiLevelTableQuery,
 )
 from excel_data_reader.normalization import normalize_header
 
@@ -966,6 +973,115 @@ class ExcelReader:
             )
             rows.append(DataRow(row, cells))
         return RowBlockData(match, tuple(rows))
+
+    def find_multilevel_tables(self, query: MultiLevelTableQuery) -> MultiLevelTableMatchSet:
+        """Find independent tables with declared header depth and authored merge paths.
+
+        Args:
+            query: Required labels or complete paths, header depth, scope, and body policy.
+        """
+
+        self._require_open()
+        if not isinstance(query, MultiLevelTableQuery):
+            raise ExcelDataReaderError(
+                Diagnostic(
+                    DiagnosticCode.INVALID_MULTILEVEL_QUERY,
+                    "expected a MultiLevelTableQuery",
+                )
+            )
+        within = self._coerce_query_rectangle(query.within, sheet=query.sheet)
+        near = self._coerce_query_coordinate(query.near, sheet=query.sheet)
+        worksheets = (
+            (self._sheet(query.sheet),)
+            if query.sheet is not None
+            else tuple(self._workbook.worksheets)
+        )
+        matches: list[MultiLevelTableMatch] = []
+        diagnostics: list[Diagnostic] = list(self.diagnostics)
+        complete = True
+        candidate_count = 0
+        for worksheet in worksheets:
+            self._checkpoint()
+            bounds = within or self._apparent_bounds(worksheet)
+            if bounds is None:
+                continue
+            try:
+                self._enforce_scan_limit(worksheet, bounds=bounds)
+            except ExcelDataReaderError as error:
+                diagnostics.extend(error.diagnostics)
+                complete = False
+                break
+
+            def value_at(row: int, column: int, source_sheet: Worksheet = worksheet) -> Any:
+                """Read a stored value without extending worksheet dimensions.
+
+                Args:
+                    row: One-based physical row to inspect.
+                    column: One-based physical column to inspect.
+                    source_sheet: Worksheet bound for this scan iteration.
+                """
+
+                return self._read_cell(source_sheet, row, column).value
+
+            result = discover_sheet(
+                sheet=worksheet.title,
+                scan_bounds=bounds,
+                merged_ranges=self._merged_rectangles(worksheet),
+                value_at=value_at,
+                query=query,
+                max_candidates=max(0, self.max_candidates - candidate_count),
+                checkpoint=self._checkpoint,
+            )
+            candidate_count += result.candidate_count
+            diagnostics.extend(result.diagnostics)
+            matches.extend(result.matches)
+            if not result.is_complete:
+                complete = False
+                break
+        if near is not None and matches:
+            minimum = min(self._distance_to_rectangle(near, match.bounds) for match in matches)
+            matches = [
+                match
+                for match in matches
+                if self._distance_to_rectangle(near, match.bounds) == minimum
+            ]
+        if not matches and complete and not diagnostics:
+            diagnostics.append(
+                Diagnostic(
+                    DiagnosticCode.TABLE_NOT_FOUND,
+                    "no multilevel table matched",
+                    sheet=query.sheet,
+                )
+            )
+        return MultiLevelTableMatchSet(
+            tuple(matches), tuple(diagnostics), complete, candidate_count
+        )
+
+    def extract_multilevel_table(self, match: MultiLevelTableMatch) -> MultiLevelTableData:
+        """Extract typed physical cells beneath one resolved multilevel header band.
+
+        Args:
+            match: Complete header paths, selected columns, and independent body bounds.
+        """
+
+        worksheet = self._sheet(match.sheet)
+        hidden_rows = self._hidden_rows(worksheet)
+        hidden_columns = self._hidden_columns(worksheet)
+        rows: list[DataRow] = []
+        for row in range(match.data_start_row, match.data_end_row + 1):
+            self._checkpoint()
+            cells = tuple(
+                self._cell_data(
+                    worksheet,
+                    row,
+                    column.source_column,
+                    hidden_rows=hidden_rows,
+                    hidden_columns=hidden_columns,
+                )
+                for column in match.columns
+            )
+            rows.append(DataRow(row, cells))
+        return MultiLevelTableData(match, tuple(rows))
 
     def find_matrices(self, query: MatrixQuery) -> MatrixMatchSet:
         """Discover row sections beneath shared hierarchical column headers.

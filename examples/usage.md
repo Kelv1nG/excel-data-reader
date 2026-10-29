@@ -522,3 +522,27 @@ uv run python examples/08_sectioned_matrix.py
 ```
 
 See [`README.md`](README.md) for the workbook paired with each focused script.
+
+## Multilevel header tables
+
+```python
+from excel_data_reader import ExcelReader, MultiLevelTableQuery
+
+with ExcelReader.open("examples/workbooks/multilevel_tables.xlsx") as reader:
+    matches = reader.find_multilevel_tables(
+        MultiLevelTableQuery(("Sales Report",), header_depth=3, sheet="Wide Store")
+    )
+    table = reader.extract_multilevel_table(matches.require_one())
+    print(table.records())
+```
+
+Selecting `Sales Report` returns its descendants, including
+`Sales Report__Store__col1` and `Sales Report__Store__col2`. To select a subtree, use a
+complete path such as `required_headers=(("Sales Report", "Store"),)`.
+Original spelling and all ancestors remain in output names. `colN` follows the physical
+position inside its merged group, counting named columns as well.
+
+For the `Repeated` sheet, discovery returns two independent matches with identical
+column names. The first body ends immediately before the second full header pattern.
+Check completeness and diagnostics before extracting matches positionally. Run
+`uv run python examples/09_multilevel_tables.py` for all three patterns.

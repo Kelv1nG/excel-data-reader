@@ -83,6 +83,7 @@ def test_all_example_scripts_run() -> None:
         "06_platform_upload.py",
         "07_legacy_xls.py",
         "08_sectioned_matrix.py",
+        "09_multilevel_tables.py",
         "api_recipes.py",
     ):
         completed = subprocess.run(

@@ -1,5 +1,11 @@
 # Examples
 
+`09_multilevel_tables.py` demonstrates explicit header depth, full header paths,
+group expansion, positional names for missing leaf labels, and independent repeated
+tables without blank separator rows. Its public workbook is `workbooks/multilevel_tables.xlsx`.
+Regenerate it with `uv run python examples/multilevel_workbook.py`; this fixture is
+separate from the ignored discussion demos in `excel_workbooks/`.
+
 These examples pair small Python programs with real `.xlsx` and `.xls` workbooks under
 `workbooks/`. The workbooks are checked in so each script runs immediately. `build_workbooks.py`
 recreates the four original table-oriented fixtures with OpenPyXL and xlwt; the sectioned-matrix
