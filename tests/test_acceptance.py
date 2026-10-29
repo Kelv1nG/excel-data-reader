@@ -14,6 +14,8 @@ from excel_data_reader import (
     ExcelReader,
     MatrixData,
     MatrixQuery,
+    MultiLevelTableData,
+    MultiLevelTableQuery,
     TableData,
     TableQuery,
 )
@@ -46,8 +48,30 @@ def _body(value: Mapping[str, Any] | None) -> BodyPolicy:
     return BodyPolicy.through_row(int(value["bottom_row"]))
 
 
-def _execute(reader: ExcelReader, case: Mapping[str, Any]) -> TableData | MatrixData:
+def _execute(
+    reader: ExcelReader, case: Mapping[str, Any]
+) -> TableData | MatrixData | MultiLevelTableData:
     operation = case["operation"]
+    if operation == "multilevel":
+        value = case["query"]
+        multi_query = MultiLevelTableQuery(
+            required_headers=tuple(
+                tuple(selector) if isinstance(selector, list) else selector
+                for selector in value["required_headers"]
+            ),
+            header_depth=value["header_depth"],
+            sheet=value.get("sheet"),
+            within=value.get("within"),
+            near=value.get("near"),
+            body=_body(value.get("body")),
+        )
+        result = reader.find_multilevel_tables(multi_query)
+        assert result.is_complete
+        assert len(result.matches) == case["expected"]["match_count"]
+        match = (
+            result.matches[case["match_index"]] if "match_index" in case else result.require_one()
+        )
+        return reader.extract_multilevel_table(match)
     if operation == "native_table":
         return reader.get_table(str(case["name"]))
     if operation == "named_range":
@@ -99,6 +123,17 @@ def test_workbook_acceptance_case(manifest: Path, case: Mapping[str, Any]) -> No
 
     with ExcelReader.open(workbook) as reader:
         table = _execute(reader, case)
+
+    if isinstance(table, MultiLevelTableData):
+        assert table.match.header_bounds.a1 == expected["header_range"]
+        assert table.match.range == expected["range"]
+        assert len(table.rows) == expected["row_count"]
+        assert [column.source_column for column in table.columns] == expected["source_columns"]
+        assert [column.name for column in table.columns] == expected["names"]
+        cells = {cell.address: cell.value for row in table.rows for cell in row.cells}
+        for address, value in expected["cells"].items():
+            assert cells[address] == value
+        return
 
     if isinstance(table, MatrixData):
         assert table.match.section == expected["section"]

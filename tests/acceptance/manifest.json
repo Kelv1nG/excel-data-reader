@@ -189,6 +189,238 @@
           "L15": 36.5
         }
       }
+    },
+    {
+      "id": "multilevel-plain-store",
+      "workbook": "../../examples/workbooks/multilevel_tables.xlsx",
+      "operation": "multilevel",
+      "query": {
+        "required_headers": [
+          "Sales Report"
+        ],
+        "header_depth": 3,
+        "sheet": "Plain Store"
+      },
+      "expected": {
+        "match_count": 1,
+        "header_range": "A1:C3",
+        "range": "A1:C6",
+        "row_count": 3,
+        "source_columns": [
+          1,
+          2,
+          3
+        ],
+        "names": [
+          "Sales Report__col1",
+          "Sales Report__Online__New",
+          "Sales Report__Store"
+        ],
+        "cells": {
+          "A4": 41,
+          "C6": 63
+        }
+      }
+    },
+    {
+      "id": "multilevel-merged-store",
+      "workbook": "../../examples/workbooks/multilevel_tables.xlsx",
+      "operation": "multilevel",
+      "query": {
+        "required_headers": [
+          "Sales Report"
+        ],
+        "header_depth": 3,
+        "sheet": "Merged Store"
+      },
+      "expected": {
+        "match_count": 1,
+        "header_range": "A1:C3",
+        "range": "A1:C6",
+        "row_count": 3,
+        "source_columns": [
+          1,
+          2,
+          3
+        ],
+        "names": [
+          "Sales Report__col1",
+          "Sales Report__Online__New",
+          "Sales Report__Store"
+        ],
+        "cells": {
+          "A4": 41,
+          "C6": 63
+        }
+      }
+    },
+    {
+      "id": "multilevel-wide-store",
+      "workbook": "../../examples/workbooks/multilevel_tables.xlsx",
+      "operation": "multilevel",
+      "query": {
+        "required_headers": [
+          [
+            "Sales Report",
+            "Store"
+          ]
+        ],
+        "header_depth": 3,
+        "sheet": "Wide Store"
+      },
+      "expected": {
+        "match_count": 1,
+        "header_range": "A1:D3",
+        "range": "A1:D6",
+        "row_count": 3,
+        "source_columns": [
+          3,
+          4
+        ],
+        "names": [
+          "Sales Report__Store__col1",
+          "Sales Report__Store__col2"
+        ],
+        "cells": {
+          "C4": 43,
+          "D6": 64
+        }
+      }
+    },
+    {
+      "id": "multilevel-mixed-leaves",
+      "workbook": "../../examples/workbooks/multilevel_tables.xlsx",
+      "operation": "multilevel",
+      "query": {
+        "required_headers": [
+          [
+            "Sales Report",
+            "Store"
+          ]
+        ],
+        "header_depth": 3,
+        "sheet": "Mixed Leaves"
+      },
+      "expected": {
+        "match_count": 1,
+        "header_range": "A1:E3",
+        "range": "A1:E6",
+        "row_count": 3,
+        "source_columns": [
+          3,
+          4,
+          5
+        ],
+        "names": [
+          "Sales Report__Store__New",
+          "Sales Report__Store__col2",
+          "Sales Report__Store__col3"
+        ],
+        "cells": {
+          "C4": 43,
+          "E6": 65
+        }
+      }
+    },
+    {
+      "id": "multilevel-four-levels",
+      "workbook": "../../examples/workbooks/multilevel_tables.xlsx",
+      "operation": "multilevel",
+      "query": {
+        "required_headers": [
+          "Sales Report"
+        ],
+        "header_depth": 4,
+        "sheet": "Four Levels"
+      },
+      "expected": {
+        "match_count": 1,
+        "header_range": "A1:D4",
+        "range": "A1:D5",
+        "row_count": 1,
+        "source_columns": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "names": [
+          "Sales Report__Region__Online__New",
+          "Sales Report__Region__Online__Returning",
+          "Sales Report__Region__Store__New",
+          "Sales Report__Region__Store__Returning"
+        ],
+        "cells": {
+          "A5": 51,
+          "D5": 54
+        }
+      }
+    },
+    {
+      "id": "multilevel-repeated0",
+      "workbook": "../../examples/workbooks/multilevel_tables.xlsx",
+      "operation": "multilevel",
+      "query": {
+        "required_headers": [
+          "Sales Report"
+        ],
+        "header_depth": 3,
+        "sheet": "Repeated"
+      },
+      "expected": {
+        "match_count": 2,
+        "header_range": "A1:C3",
+        "range": "A1:C6",
+        "row_count": 3,
+        "source_columns": [
+          1,
+          2,
+          3
+        ],
+        "names": [
+          "Sales Report__col1",
+          "Sales Report__Online__New",
+          "Sales Report__Store"
+        ],
+        "cells": {
+          "A4": 41,
+          "C6": 63
+        }
+      },
+      "match_index": 0
+    },
+    {
+      "id": "multilevel-repeated1",
+      "workbook": "../../examples/workbooks/multilevel_tables.xlsx",
+      "operation": "multilevel",
+      "query": {
+        "required_headers": [
+          "Sales Report"
+        ],
+        "header_depth": 3,
+        "sheet": "Repeated"
+      },
+      "expected": {
+        "match_count": 2,
+        "header_range": "A7:C9",
+        "range": "A7:C12",
+        "row_count": 3,
+        "source_columns": [
+          1,
+          2,
+          3
+        ],
+        "names": [
+          "Sales Report__col1",
+          "Sales Report__Online__New",
+          "Sales Report__Store"
+        ],
+        "cells": {
+          "A10": 101,
+          "C12": 123
+        }
+      },
+      "match_index": 1
     }
   ]
 }
